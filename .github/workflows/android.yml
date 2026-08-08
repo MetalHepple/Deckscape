@@ -30,7 +30,7 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleRelease
 
       - name: Upload debug APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Deckscape-debug
           path: app/build/outputs/apk/debug/app-debug.apk
