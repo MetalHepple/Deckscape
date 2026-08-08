@@ -54,11 +54,21 @@ final class SourceListAdapter extends BaseAdapter {
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(Ui.dp(context, 12), Ui.dp(context, 9),
+        row.setPadding(Ui.dp(context, 8), Ui.dp(context, 9),
                 Ui.dp(context, 12), Ui.dp(context, 10));
         boolean selected = source.id().equals(selectedId);
-        row.setBackground(Ui.rounded(selected ? Ui.SURFACE_SELECTED : Ui.SURFACE,
-                Ui.dp(context, 12), selected ? Ui.CYAN : Ui.SURFACE, Ui.dp(context, 1)));
+        row.setBackground(Ui.rounded(selected ? Ui.CYAN_DARK : Ui.SURFACE,
+                Ui.dp(context, 12), selected ? Ui.CYAN : Ui.DIVIDER,
+                Ui.dp(context, selected ? 2 : 1)));
+        row.setContentDescription(source.displayName + (selected ? ", browsing" : ""));
+
+        View accent = new View(context);
+        accent.setBackground(Ui.rounded(selected ? Ui.CYAN : Ui.DIVIDER,
+                Ui.dp(context, 3)));
+        LinearLayout.LayoutParams accentParams = new LinearLayout.LayoutParams(
+                Ui.dp(context, 5), Ui.dp(context, 36));
+        accentParams.rightMargin = Ui.dp(context, 9);
+        row.addView(accent, accentParams);
 
         ImageView folder = new ImageView(context);
         folder.setImageDrawable(new FolderDrawable(selected ? Ui.CYAN : Ui.MUTED));
@@ -73,6 +83,7 @@ final class SourceListAdapter extends BaseAdapter {
 
         TextView title = Ui.title(context, source.displayName, 16);
         title.setSingleLine(true);
+        if (selected) title.setTextColor(Ui.CYAN);
         copy.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -84,6 +95,18 @@ final class SourceListAdapter extends BaseAdapter {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         row.addView(copy, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        if (selected) {
+            TextView badge = Ui.title(context, "BROWSING", 9);
+            badge.setTextColor(Ui.NAV);
+            badge.setGravity(Gravity.CENTER);
+            badge.setPadding(Ui.dp(context, 7), 0, Ui.dp(context, 7), 0);
+            badge.setBackground(Ui.rounded(Ui.CYAN, Ui.dp(context, 7)));
+            LinearLayout.LayoutParams badgeParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 24));
+            badgeParams.leftMargin = Ui.dp(context, 6);
+            row.addView(badge, badgeParams);
+        }
 
         LinearLayout.LayoutParams outer = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

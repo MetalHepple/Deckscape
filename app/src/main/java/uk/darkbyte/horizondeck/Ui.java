@@ -18,6 +18,8 @@ final class Ui {
     static final int CYAN = Color.rgb(66, 217, 232);
     static final int CYAN_DARK = Color.rgb(19, 74, 88);
     static final int CORAL = Color.rgb(255, 122, 89);
+    static final int GREEN = Color.rgb(98, 224, 164);
+    static final int GREEN_DARK = Color.rgb(18, 66, 54);
     static final int TEXT = Color.rgb(244, 248, 251);
     static final int MUTED = Color.rgb(160, 180, 194);
     static final int DIVIDER = Color.rgb(35, 53, 70);
@@ -61,10 +63,13 @@ final class Ui {
     static Button chip(Context context, String label, boolean selected) {
         Button button = button(context, label, false);
         button.setTextSize(13);
-        button.setTextColor(selected ? CYAN : TEXT);
+        button.setTextColor(selected ? NAV : TEXT);
+        button.setTypeface(Typeface.create("sans",
+                selected ? Typeface.BOLD : Typeface.NORMAL));
         button.setPadding(dp(context, 16), 0, dp(context, 16), 0);
-        button.setBackground(rounded(selected ? SURFACE_SELECTED : SURFACE_HIGH,
-                dp(context, 10), selected ? CYAN : DIVIDER, dp(context, 1)));
+        button.setBackground(rounded(selected ? CYAN : SURFACE_HIGH,
+                dp(context, 10), selected ? CYAN : DIVIDER,
+                dp(context, selected ? 2 : 1)));
         return button;
     }
 

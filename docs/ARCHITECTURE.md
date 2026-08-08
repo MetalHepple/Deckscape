@@ -10,7 +10,7 @@ GitHub Contents / Git Trees API
               │
       ┌───────┴────────┐
       ▼                ▼
-visible card    user presses Apply
+visible card  user presses Download/Use
       │                │
       ▼                ▼
 wsrv.nl thumbnail bounded raw download
@@ -24,6 +24,11 @@ preview cache           │
                        ▼
                WallpaperService engine
 ```
+
+Directory listings reuse the cached recursive Git tree to select one safe,
+representative child image for each category card. The full wallpaper is still
+not downloaded merely to show the category: it follows the same bounded preview
+pipeline as an ordinary visible wallpaper card.
 
 ## Trust boundaries
 

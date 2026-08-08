@@ -12,9 +12,13 @@ the target 1920×1080, 240 dpi head-unit profile.
 - `implemented-overview.png`, `implemented-gallery.png`, and
   `implemented-add-source.png` are emulator captures of the native Android
   implementation.
+- `implemented-1.2-overview.png`, `implemented-1.2-gallery.png`,
+  `implemented-1.2-download-progress.png`, and `implemented-1.2-active.png`
+  record the subsequent category-cover, download-progress, and active-state
+  refinements at the same target profile.
 
-The screenshots contain public Wallz catalog previews only. They were captured
-in an isolated emulator and contain no vehicle, account, map, or location data.
+The screenshots contain public catalog previews only. They were captured in an
+isolated emulator and contain no vehicle, account, map, or location data.
 
 ## Exact generation prompt
 

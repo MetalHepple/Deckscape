@@ -44,6 +44,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
+    private static final String UI_PREFS = "ui_state";
+    private static final String KEY_LAST_SOURCE = "last_source";
     private static final String[] INTERVAL_LABELS = {
             "Manual", "1 minute", "1 hour", "6 hours", "1 day"
     };
@@ -87,14 +89,14 @@ public final class MainActivity extends Activity {
         previewCache = new PreviewCache(this);
         setContentView(buildUi());
         reloadSources();
-        if (!sources.isEmpty()) selectSource(sources.get(0));
+        RepositorySource initial = lastSource();
+        if (initial != null) selectSource(initial);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         updateActiveState();
-        if (gridAdapter != null) gridAdapter.notifyDataSetChanged();
     }
 
     @Override
@@ -154,7 +156,7 @@ public final class MainActivity extends Activity {
         activeIndicator.setGravity(Gravity.CENTER);
         activeIndicator.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
         top.addView(activeIndicator, new LinearLayout.LayoutParams(
-                Ui.dp(this, 110), Ui.dp(this, 42)));
+                Ui.dp(this, 132), Ui.dp(this, 42)));
 
         Spinner interval = new Spinner(this);
         ArrayAdapter<String> intervals = new ArrayAdapter<String>(this,
@@ -177,6 +179,7 @@ public final class MainActivity extends Activity {
         next.setOnClickListener(view -> {
             sendBroadcast(new Intent(WallpaperEngineService.ACTION_NEXT).setPackage(getPackageName()));
             setStatus("Advanced to the next downloaded wallpaper.");
+            next.postDelayed(() -> gridAdapter.refreshLibraryState(isWallpaperActive()), 500);
         });
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
                 Ui.dp(this, 96), Ui.dp(this, 48));
@@ -366,6 +369,8 @@ public final class MainActivity extends Activity {
 
     private void selectSource(RepositorySource source) {
         activeSource = source;
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_LAST_SOURCE, source.id()).apply();
         currentPath = "";
         allMode = false;
         rootCategories.clear();
@@ -374,6 +379,16 @@ public final class MainActivity extends Activity {
         rebuildCategoryStrip();
         setStatus("Loading " + source.displayName + "…");
         loadDirectory("");
+    }
+
+    private RepositorySource lastSource() {
+        if (sources.isEmpty()) return null;
+        String saved = getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getString(KEY_LAST_SOURCE, "");
+        for (RepositorySource source : sources) {
+            if (source.id().equals(saved)) return source;
+        }
+        return sources.get(0);
     }
 
     private void loadDirectory(String relativePath) {
@@ -484,15 +499,22 @@ public final class MainActivity extends Activity {
             return;
         }
         RepositorySource source = activeSource;
-        setLoading(true);
         setStatus("Preparing " + item.name + "…");
+        gridAdapter.setDownloadProgress(source, item, -1);
         io.execute(() -> {
             try {
                 File file = WallpaperStore.installedFile(this, source, item);
                 if (file == null) {
+                    runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
+                    int[] lastPercent = {-1};
                     file = WallpaperStore.install(this, source, item, (downloaded, total) -> {
                         int percent = total > 0 ? (int) Math.min(100, downloaded * 100 / total) : 0;
-                        runOnUiThread(() -> setStatus("Downloading " + item.name + " • " + percent + "%"));
+                        if (percent == lastPercent[0]) return;
+                        lastPercent[0] = percent;
+                        runOnUiThread(() -> {
+                            gridAdapter.setDownloadProgress(source, item, percent);
+                            setStatus("Downloading " + item.name + " • " + percent + "%");
+                        });
                     });
                 }
                 WallpaperStore.select(this, file);
@@ -500,8 +522,8 @@ public final class MainActivity extends Activity {
                         .setPackage(getPackageName()));
                 boolean active = isWallpaperActive();
                 runOnUiThread(() -> {
-                    setLoading(false);
-                    gridAdapter.notifyDataSetChanged();
+                    gridAdapter.clearDownloadProgress(source, item);
+                    gridAdapter.refreshLibraryState(active);
                     if (active) {
                         setStatus("Applied " + item.name + ".");
                         Toast.makeText(this, "Wallpaper applied", Toast.LENGTH_SHORT).show();
@@ -512,7 +534,7 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
-                    setLoading(false);
+                    gridAdapter.clearDownloadProgress(source, item);
                     setStatus("Could not apply wallpaper: " + readableMessage(exception));
                     Toast.makeText(this, readableMessage(exception), Toast.LENGTH_LONG).show();
                 });
@@ -544,12 +566,13 @@ public final class MainActivity extends Activity {
 
     private void updateActiveState() {
         boolean active = isWallpaperActive();
-        activeIndicator.setText(active ? "ACTIVE" : "NOT ACTIVE");
+        activeIndicator.setText(active ? "WALLPAPER ON" : "WALLPAPER OFF");
         activeIndicator.setTextColor(active ? Ui.CYAN : Ui.CORAL);
         activeIndicator.setBackground(Ui.rounded(active ? Ui.CYAN_DARK : Ui.SURFACE_HIGH,
                 Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, 1));
-        activateButton.setText(active ? "Active ✓" : "Activate");
+        activateButton.setText(active ? "Active" : "Activate");
         activateButton.setEnabled(!active);
+        if (gridAdapter != null) gridAdapter.refreshLibraryState(active);
     }
 
     private boolean isWallpaperActive() {
@@ -705,9 +728,10 @@ public final class MainActivity extends Activity {
         double previewMb = previewCache.diskBytes() / (1024.0 * 1024.0);
         double libraryMb = WallpaperStore.totalBytes(this) / (1024.0 * 1024.0);
         String message = String.format(Locale.ROOT,
-                "HorizonDeck 1.1\n\n"
+                "HorizonDeck 1.2\n\n"
                         + "• Public GitHub repositories only\n"
-                        + "• Folders are shown as categories\n"
+                        + "• Folder categories use a representative wallpaper cover\n"
+                        + "• Download and active states stay visible on each card\n"
                         + "• 480×270 previews are cached locally\n"
                         + "• GIF animation pauses behind other apps\n\n"
                         + "Preview cache: %.1f MB / 96 MB\n"

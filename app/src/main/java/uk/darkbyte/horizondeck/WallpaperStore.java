@@ -70,7 +70,7 @@ final class WallpaperStore {
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(90_000);
         connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "HorizonDeck/1.0");
+        connection.setRequestProperty("User-Agent", "HorizonDeck/1.2");
         try {
             int status = connection.getResponseCode();
             if (status != HttpURLConnection.HTTP_OK) {
@@ -136,7 +136,7 @@ final class WallpaperStore {
         return files.get(0);
     }
 
-    private static String destinationName(RepositorySource source, CatalogItem item) {
+    static String destinationName(RepositorySource source, CatalogItem item) {
         String sourceName = WallpaperRules.safeFileName(source.owner + "_" + source.repository);
         String revision = item.sha.length() >= 12 ? item.sha.substring(0, 12)
                 : Integer.toHexString(item.path.hashCode());

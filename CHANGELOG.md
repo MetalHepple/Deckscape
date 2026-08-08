@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 — 2026-08-08
+
+- Added Vyrx Wallpapers, Aesthetic Wallpapers, Wall-E-Desk, and Terminal
+  Wallpapers as curated defaults with verified branches and starting folders.
+- Added representative wallpaper covers and centered names to category cards.
+- Added strong browsing, downloaded, selected, and active visual states.
+- Moved determinate download progress into each wallpaper action button.
+- Preserved the last browsed source across Android activity recreation.
+
 ## 1.1.0 — 2026-08-08
 
 - Image-generation-guided UI redesign for the 1920×1080 head-unit profile.

@@ -192,7 +192,7 @@ final class PreviewCache {
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(45_000);
         connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "HorizonDeck/1.0");
+        connection.setRequestProperty("User-Agent", "HorizonDeck/1.2");
         try {
             int status = connection.getResponseCode();
             if (status != HttpURLConnection.HTTP_OK) {
@@ -224,7 +224,7 @@ final class PreviewCache {
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(60_000);
         connection.setInstanceFollowRedirects(true);
-        connection.setRequestProperty("User-Agent", "HorizonDeck/1.0");
+        connection.setRequestProperty("User-Agent", "HorizonDeck/1.2");
         try {
             int status = connection.getResponseCode();
             if (status != HttpURLConnection.HTTP_OK) {

@@ -125,6 +125,20 @@ final class GitHubCatalogClient {
             }
         }
         result.sort(itemComparator());
+        boolean hasDirectories = false;
+        for (CatalogItem item : result) {
+            if (item.isDirectory()) {
+                hasDirectories = true;
+                break;
+            }
+        }
+        if (hasDirectories) {
+            try {
+                result = CategoryPreviewSelector.attach(result, listAll(source).items);
+            } catch (Exception ignored) {
+                // Category browsing still works when the optional cover index is unavailable.
+            }
+        }
         return new CatalogPage(result, false, response.stale);
     }
 
@@ -151,7 +165,7 @@ final class GitHubCatalogClient {
         connection.setReadTimeout(40_000);
         connection.setRequestProperty("Accept", "application/vnd.github+json");
         connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
-        connection.setRequestProperty("User-Agent", "HorizonDeck/1.0");
+        connection.setRequestProperty("User-Agent", "HorizonDeck/1.2");
         try {
             int status = connection.getResponseCode();
             if (status != HttpURLConnection.HTTP_OK) {

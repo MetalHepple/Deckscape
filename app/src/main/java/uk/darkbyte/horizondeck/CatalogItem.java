@@ -8,13 +8,20 @@ final class CatalogItem {
     final String type;
     final long size;
     final String sha;
+    final CatalogItem preview;
 
     CatalogItem(String name, String path, String type, long size, String sha) {
+        this(name, path, type, size, sha, null);
+    }
+
+    CatalogItem(String name, String path, String type, long size, String sha,
+                CatalogItem preview) {
         this.name = name;
         this.path = RepositorySource.normalizePath(path);
         this.type = type;
         this.size = size;
         this.sha = sha == null ? "" : sha;
+        this.preview = preview;
     }
 
     boolean isDirectory() {
@@ -23,6 +30,10 @@ final class CatalogItem {
 
     boolean isGif() {
         return WallpaperRules.isGif(name);
+    }
+
+    CatalogItem withPreview(CatalogItem value) {
+        return new CatalogItem(name, path, type, size, sha, value);
     }
 
     String stableKey(RepositorySource source) {

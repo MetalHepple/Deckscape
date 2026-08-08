@@ -74,6 +74,14 @@ final class SourceStore {
                 "backgrounds", true));
         sources.add(new RepositorySource("KDE Breeze", "KDE", "breeze", "master",
                 "wallpapers/Next/contents", true));
+        sources.add(new RepositorySource("Vyrx", "vyrx-dev", "Wallpapers",
+                "master", "", true));
+        sources.add(new RepositorySource("Aesthetic", "D3Ext", "aesthetic-wallpapers",
+                "main", "images", true));
+        sources.add(new RepositorySource("Wall-E-Desk", "JoshuaThadi", "Wall-E-Desk",
+                "main", "", true));
+        sources.add(new RepositorySource("ItsTerm1n4l", "ItsTerm1n4l", "Wallpapers",
+                "main", "images", true));
         return sources;
     }
 }

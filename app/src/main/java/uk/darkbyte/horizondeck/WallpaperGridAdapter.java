@@ -1,19 +1,28 @@
 package uk.darkbyte.horizondeck;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
+import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 final class WallpaperGridAdapter extends BaseAdapter {
     interface Listener {
@@ -25,8 +34,12 @@ final class WallpaperGridAdapter extends BaseAdapter {
     private final Listener listener;
     private final List<CatalogItem> allItems = new ArrayList<>();
     private final List<CatalogItem> visibleItems = new ArrayList<>();
+    private final Map<String, Integer> downloadProgress = new HashMap<>();
+    private final Set<String> installedNames = new HashSet<>();
     private RepositorySource source;
     private String filter = "";
+    private String selectedFileName = "";
+    private boolean wallpaperActive;
 
     WallpaperGridAdapter(Context context, PreviewCache previews, Listener listener) {
         this.context = context;
@@ -44,6 +57,27 @@ final class WallpaperGridAdapter extends BaseAdapter {
     void filter(String value) {
         filter = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         applyFilter();
+    }
+
+    void refreshLibraryState(boolean engineActive) {
+        wallpaperActive = engineActive;
+        installedNames.clear();
+        List<File> files = WallpaperStore.list(context);
+        for (File file : files) installedNames.add(file.getName());
+        File selected = WallpaperStore.current(context, files);
+        selectedFileName = selected == null ? "" : selected.getName();
+        notifyDataSetChanged();
+    }
+
+    void setDownloadProgress(RepositorySource itemSource, CatalogItem item, int percent) {
+        int value = percent < 0 ? -1 : Math.min(100, percent);
+        downloadProgress.put(item.stableKey(itemSource), value);
+        notifyDataSetChanged();
+    }
+
+    void clearDownloadProgress(RepositorySource itemSource, CatalogItem item) {
+        downloadProgress.remove(item.stableKey(itemSource));
+        notifyDataSetChanged();
     }
 
     private void applyFilter() {
@@ -79,52 +113,89 @@ final class WallpaperGridAdapter extends BaseAdapter {
     }
 
     private View buildDirectoryCard(CatalogItem item) {
-        LinearLayout card = new LinearLayout(context);
-        card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(Ui.dp(context, 15), Ui.dp(context, 12),
-                Ui.dp(context, 13), Ui.dp(context, 12));
+        FrameLayout card = new FrameLayout(context);
         card.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(context, 14),
                 Ui.DIVIDER, Ui.dp(context, 1)));
+        card.setClipToOutline(true);
         card.setOnClickListener(view -> listener.onAction(item));
         card.setContentDescription("Open category " + item.name);
 
-        ImageView folder = new ImageView(context);
-        folder.setImageDrawable(new FolderDrawable(Ui.CYAN));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(
-                Ui.dp(context, 34), Ui.dp(context, 34));
-        iconParams.rightMargin = Ui.dp(context, 12);
-        card.addView(folder, iconParams);
+        ImageView image = new ImageView(context);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        card.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        LinearLayout copy = new LinearLayout(context);
-        copy.setOrientation(LinearLayout.VERTICAL);
-        copy.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = Ui.title(context, item.name, 15);
-        title.setSingleLine(true);
-        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        copy.addView(title);
-        TextView meta = Ui.text(context, "Browse folder", 11, Ui.MUTED);
-        copy.addView(meta);
-        card.addView(copy, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView placeholder = Ui.title(context, "CATEGORY", 11);
+        placeholder.setTextColor(Ui.MUTED);
+        placeholder.setGravity(Gravity.CENTER);
+        card.addView(placeholder, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView arrow = Ui.title(context, "›", 26);
-        arrow.setTextColor(Ui.CYAN);
-        arrow.setGravity(Gravity.CENTER);
-        card.addView(arrow, new LinearLayout.LayoutParams(
-                Ui.dp(context, 28), Ui.dp(context, 42)));
+        if (item.preview != null) {
+            String key = item.preview.stableKey(source);
+            image.setTag(key);
+            previews.request(source, item.preview, (bitmap, error) -> {
+                if (!key.equals(image.getTag())) return;
+                if (bitmap != null) {
+                    image.setImageBitmap(bitmap);
+                    placeholder.setVisibility(View.GONE);
+                }
+            });
+        } else {
+            ImageView folder = new ImageView(context);
+            folder.setImageDrawable(new FolderDrawable(Ui.CYAN));
+            FrameLayout.LayoutParams folderParams = new FrameLayout.LayoutParams(
+                    Ui.dp(context, 48), Ui.dp(context, 48), Gravity.CENTER);
+            folderParams.bottomMargin = Ui.dp(context, 34);
+            card.addView(folder, folderParams);
+        }
+
+        TextView title = Ui.title(context, item.name, 17);
+        title.setGravity(Gravity.CENTER);
+        title.setMaxLines(2);
+        title.setPadding(Ui.dp(context, 14), Ui.dp(context, 8),
+                Ui.dp(context, 14), Ui.dp(context, 8));
+        title.setShadowLayer(5f, 0f, Ui.dp(context, 1), Color.BLACK);
+        title.setBackground(Ui.rounded(Color.argb(220, 7, 17, 27), Ui.dp(context, 10),
+                Color.argb(180, 66, 217, 232), Ui.dp(context, 1)));
+        FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER);
+        titleParams.leftMargin = Ui.dp(context, 14);
+        titleParams.rightMargin = Ui.dp(context, 14);
+        card.addView(title, titleParams);
+
+        TextView categoryBadge = stateBadge("CATEGORY", Ui.CYAN, Ui.NAV);
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
+                Gravity.TOP | Gravity.START);
+        badgeParams.setMargins(Ui.dp(context, 9), Ui.dp(context, 9), 0, 0);
+        card.addView(categoryBadge, badgeParams);
+
         card.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 76)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 174)));
         return card;
     }
 
     private View buildWallpaperCard(CatalogItem item) {
+        String key = item.stableKey(source);
+        Integer percent = downloadProgress.get(key);
+        String destinationName = WallpaperStore.destinationName(source, item);
+        boolean installed = installedNames.contains(destinationName);
+        boolean selected = destinationName.equals(selectedFileName);
+        boolean active = selected && wallpaperActive;
+
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Ui.dp(context, 6), Ui.dp(context, 6),
                 Ui.dp(context, 6), Ui.dp(context, 6));
-        card.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(context, 14),
-                Ui.DIVIDER, Ui.dp(context, 1)));
+        int cardColor = active ? Ui.CYAN_DARK : selected ? Ui.GREEN_DARK : Ui.SURFACE;
+        int borderColor = active ? Ui.CYAN : selected || installed ? Ui.GREEN : Ui.DIVIDER;
+        int borderWidth = active || selected ? 3 : 1;
+        card.setBackground(Ui.rounded(cardColor, Ui.dp(context, 14),
+                borderColor, Ui.dp(context, borderWidth)));
+        String state = active ? "active" : selected ? "selected" : installed ? "downloaded" : "not downloaded";
+        card.setContentDescription(item.name + ", " + state);
 
         FrameLayout imageFrame = new FrameLayout(context);
         imageFrame.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(context, 10)));
@@ -141,7 +212,6 @@ final class WallpaperGridAdapter extends BaseAdapter {
         loading.setGravity(Gravity.CENTER);
         imageFrame.addView(loading, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        String key = item.stableKey(source);
         image.setTag(key);
         previews.request(source, item, (bitmap, error) -> {
             if (!key.equals(image.getTag())) return;
@@ -153,19 +223,18 @@ final class WallpaperGridAdapter extends BaseAdapter {
             }
         });
 
+        if (percent != null) {
+            addImageBadge(imageFrame, "DOWNLOADING", Ui.CYAN, Ui.NAV, Gravity.TOP | Gravity.START);
+        } else if (active) {
+            addImageBadge(imageFrame, "ACTIVE", Ui.CYAN, Ui.NAV, Gravity.TOP | Gravity.START);
+        } else if (selected) {
+            addImageBadge(imageFrame, "SELECTED", Ui.GREEN, Ui.NAV, Gravity.TOP | Gravity.START);
+        } else if (installed) {
+            addImageBadge(imageFrame, "DOWNLOADED", Ui.GREEN, Ui.NAV, Gravity.TOP | Gravity.START);
+        }
+
         if (item.isGif()) {
-            TextView badge = Ui.title(context, "GIF", 11);
-            badge.setTextColor(Ui.CYAN);
-            badge.setGravity(Gravity.CENTER);
-            badge.setPadding(Ui.dp(context, 8), Ui.dp(context, 3),
-                    Ui.dp(context, 8), Ui.dp(context, 3));
-            badge.setBackground(Ui.rounded(Ui.NAV, Ui.dp(context, 8),
-                    Ui.CYAN, Ui.dp(context, 1)));
-            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM | Gravity.END);
-            badgeParams.setMargins(0, 0, Ui.dp(context, 7), Ui.dp(context, 7));
-            imageFrame.addView(badge, badgeParams);
+            addImageBadge(imageFrame, "GIF", Ui.CYAN, Ui.NAV, Gravity.BOTTOM | Gravity.END);
         }
 
         LinearLayout details = new LinearLayout(context);
@@ -181,25 +250,81 @@ final class WallpaperGridAdapter extends BaseAdapter {
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         copy.addView(title, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 24)));
-        TextView meta = Ui.text(context, item.humanSize(), 11, Ui.MUTED);
+        String metaText = active ? "Current wallpaper" : installed ? "Ready on device" : item.humanSize();
+        TextView meta = Ui.text(context, metaText, 11,
+                active ? Ui.CYAN : installed ? Ui.GREEN : Ui.MUTED);
         copy.addView(meta, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 18)));
         details.addView(copy, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
-        Button action = Ui.actionButton(context, "Apply", true);
-        if (!WallpaperRules.canInstall(item)) {
-            action.setText(R.string.too_large);
-            action.setEnabled(false);
-            action.setTextColor(Ui.MUTED);
-        }
-        action.setOnClickListener(view -> listener.onAction(item));
+        FrameLayout actionBox = buildAction(item, percent, installed, selected, active);
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                Ui.dp(context, 78), Ui.dp(context, 40));
+                Ui.dp(context, 92), Ui.dp(context, 40));
         actionParams.leftMargin = Ui.dp(context, 8);
-        details.addView(action, actionParams);
+        details.addView(actionBox, actionParams);
         card.addView(details, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 50)));
         return card;
+    }
+
+    private FrameLayout buildAction(CatalogItem item, Integer percent, boolean installed,
+                                    boolean selected, boolean active) {
+        FrameLayout box = new FrameLayout(context);
+        String label = !WallpaperRules.canInstall(item) ? context.getString(R.string.too_large)
+                : percent != null ? (percent < 0 ? "Starting" : percent + "%")
+                : active ? "Active"
+                : selected ? "Activate"
+                : installed ? "Use" : "Download";
+        boolean enabled = WallpaperRules.canInstall(item) && percent == null && !active;
+        Button action = Ui.actionButton(context, label, !installed || selected);
+        action.setEnabled(enabled);
+        if (!enabled && percent == null) action.setTextColor(active ? Ui.CYAN : Ui.MUTED);
+        if (active) {
+            action.setBackground(Ui.rounded(Ui.CYAN_DARK, Ui.dp(context, 10),
+                    Ui.CYAN, Ui.dp(context, 2)));
+        } else if (installed) {
+            action.setTextColor(Ui.GREEN);
+            action.setBackground(Ui.rounded(Ui.GREEN_DARK, Ui.dp(context, 10),
+                    Ui.GREEN, Ui.dp(context, 1)));
+        }
+        action.setOnClickListener(view -> listener.onAction(item));
+        box.addView(action, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        if (percent != null) {
+            ProgressBar bar = new ProgressBar(context, null,
+                    android.R.attr.progressBarStyleHorizontal);
+            bar.setMax(100);
+            bar.setIndeterminate(percent < 0);
+            if (percent >= 0) bar.setProgress(percent);
+            bar.setProgressTintList(ColorStateList.valueOf(Ui.CYAN));
+            bar.setIndeterminateTintList(ColorStateList.valueOf(Ui.CYAN));
+            bar.setProgressBackgroundTintList(ColorStateList.valueOf(Ui.CYAN_DARK));
+            FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 4), Gravity.BOTTOM);
+            barParams.setMargins(Ui.dp(context, 9), 0, Ui.dp(context, 9), Ui.dp(context, 5));
+            box.addView(bar, barParams);
+        }
+        return box;
+    }
+
+    private void addImageBadge(FrameLayout frame, String label, int fill, int textColor,
+                               int gravity) {
+        TextView badge = stateBadge(label, fill, textColor);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25), gravity);
+        params.setMargins(Ui.dp(context, 7), Ui.dp(context, 7),
+                Ui.dp(context, 7), Ui.dp(context, 7));
+        frame.addView(badge, params);
+    }
+
+    private TextView stateBadge(String label, int fill, int textColor) {
+        TextView badge = Ui.title(context, label, 10);
+        badge.setTextColor(textColor);
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
+        badge.setBackground(Ui.rounded(fill, Ui.dp(context, 7)));
+        return badge;
     }
 }

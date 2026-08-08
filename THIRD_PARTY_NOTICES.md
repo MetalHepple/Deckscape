@@ -22,6 +22,16 @@ the HorizonDeck project. Users can disable it from **Info → Data saver**.
 - [KDE/breeze](https://github.com/KDE/breeze) provides SPDX licence material in
   its `LICENSES` directory. Individual wallpaper metadata may provide further
   attribution.
+- [vyrx-dev/Wallpapers](https://github.com/vyrx-dev/Wallpapers) states that the
+  collection credits its original artists and that the maintainer did not make
+  the collected images.
+- [D3Ext/aesthetic-wallpapers](https://github.com/D3Ext/aesthetic-wallpapers)
+  collects images from multiple external sources and asks creators to contact
+  the maintainer for credit.
+- [JoshuaThadi/Wall-E-Desk](https://github.com/JoshuaThadi/Wall-E-Desk) is a
+  categorized desktop, mobile, and animated wallpaper collection.
+- [ItsTerm1n4l/Wallpapers](https://github.com/ItsTerm1n4l/Wallpapers) notes that
+  most collected wallpapers were created by others and invites creator claims.
 
 Users can add other public repositories. They are responsible for checking the
 source and creator terms that apply to any downloaded image.

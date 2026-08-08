@@ -15,20 +15,21 @@ app does not call private BYD APIs and is intended to remain useful on other
 Android devices that support live wallpapers.
 
 <p align="center">
-  <img src="brand/ui-review/implemented-gallery.png" width="960" alt="HorizonDeck wallpaper gallery">
+  <img src="brand/ui-review/implemented-1.2-gallery.png" width="960" alt="HorizonDeck wallpaper gallery">
 </p>
 
 ## Highlights
 
 - Landscape-first, four-column interface with large head-unit touch targets.
-- Three curated sources with no bundled artwork: Wallz, elementary Wallpapers,
-  and KDE Breeze.
+- Seven curated sources with no bundled artwork, including Wallz, Wall-E-Desk,
+  Vyrx, and Aesthetic Wallpapers.
 - Add any public GitHub repository, branch, or starting folder.
-- Repository folders appear as categories; **All wallpapers** builds a flat,
-  recursive view only when requested.
+- Repository folders appear as image-backed category cards; **All wallpapers**
+  builds a flat, recursive view only when requested.
 - JPEG, PNG, WebP, and animated GIF support.
-- One-touch **Apply** downloads, validates, selects, and applies an item. Android
-  requires one system confirmation the first time the live wallpaper is used.
+- One-touch **Download** validates, selects, and applies an item with progress
+  shown inside its card button. Downloaded and active cards remain highlighted.
+  Android requires one system confirmation the first time the live wallpaper is used.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF animation is capped at 10 fps and pauses completely while hidden.
 - No account, analytics, location access, storage permission, or clear-text
@@ -54,6 +55,10 @@ fallback. GitHub's anonymous API limit still applies to uncached requests.
 | Wallz | `fr0st-xyz/wallz` | repository root |
 | elementary | `elementary/wallpapers` | `backgrounds` |
 | KDE Breeze | `KDE/breeze` | `wallpapers/Next/contents` |
+| Vyrx | `vyrx-dev/Wallpapers` | repository root |
+| Aesthetic | `D3Ext/aesthetic-wallpapers` | `images` |
+| Wall-E-Desk | `JoshuaThadi/Wall-E-Desk` | repository root |
+| ItsTerm1n4l | `ItsTerm1n4l/Wallpapers` | `images` |
 
 No files from these repositories are packaged in the APK. Each image remains
 subject to its creator's and source repository's terms. See
