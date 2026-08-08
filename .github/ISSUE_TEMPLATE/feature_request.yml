@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest a focused improvement for Deckscape.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the interaction and expected result.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Head-unit impact
+      description: Note expected APK-size, memory, CPU, bandwidth, storage, or distraction impact.
+    validations:
+      required: true

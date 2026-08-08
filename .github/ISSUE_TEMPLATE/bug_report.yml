@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible Deckscape problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for helping improve Deckscape. Remove private URLs and location data.
+  - type: input
+    id: version
+    attributes:
+      label: Deckscape version
+      placeholder: 1.3.0
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Android device and version
+      placeholder: Android 10 head unit, 1920×1080 at 240 dpi
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest reliable sequence and redact private repository details.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Do not include credentials, ADB keys, or location information.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, private URLs, and location data.
+          required: true

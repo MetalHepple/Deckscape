@@ -1,0 +1,27 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.DS_Store
+Thumbs.db
+
+# Signing material (never commit)
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Local evidence and downloaded wallpapers
+evidence/
+wallpapers/
+*.apk
+*.apkm
