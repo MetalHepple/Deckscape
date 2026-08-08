@@ -1,7 +1,9 @@
-# HorizonDeck brand asset
+# Deckscape brand asset
 
-`horizondeck-icon-source.png` is the original 1254×1254 icon generated for this
-project with OpenAI image-generation tooling on 2026-08-07.
+`deckscape-icon-source.png` is the original 1254×1254 icon generated for this
+project with OpenAI image-generation tooling on 2026-08-07. It was created
+under the application's former working title, HorizonDeck; the exact historical
+prompt is preserved below. The mark contains no text and remains the Deckscape icon.
 
 Generation mode: OpenAI built-in image generation.
 
@@ -19,5 +21,5 @@ Constraints: no text, no letters, no vehicle brand marks, no trademarks, no wate
 ```
 
 Android launcher variants are locally resized from this source and use a
-transparent rounded mask. `drawable-nodpi/horizondeck_mark.png` is the compact
+transparent rounded mask. `drawable-nodpi/deckscape_mark.png` is the compact
 in-app header version.

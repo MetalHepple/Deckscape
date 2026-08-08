@@ -64,5 +64,5 @@ are sampled down above 4,096 pixels per axis for runtime memory safety. GIFs
 use Android's platform `Movie` decoder at a 100 ms redraw cadence and stop
 scheduling frames immediately when the wallpaper becomes hidden.
 
-Android owns activation. HorizonDeck opens
+Android owns activation. Deckscape opens
 `ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.

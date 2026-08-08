@@ -1,6 +1,6 @@
 # GitHub source format
 
-HorizonDeck treats a source as six values:
+Deckscape treats a source as six values:
 
 | Field | Purpose |
 | --- | --- |
@@ -8,7 +8,7 @@ HorizonDeck treats a source as six values:
 | Owner | GitHub account or organisation |
 | Repository | Public GitHub repository |
 | Branch | Branch queried by the Contents and Git Trees APIs |
-| Starting folder | Optional repository subtree exposed by HorizonDeck |
+| Starting folder | Optional repository subtree exposed by Deckscape |
 | Built-in | Whether the source ships as a curated default |
 
 The app accepts `owner/repository`, a repository URL, or a GitHub
@@ -42,7 +42,7 @@ preview, but show **No preview** if that service is unavailable.
 ## Future thumbnail manifest
 
 Version 1.0 does not require a repository-specific manifest. A future optional
-`.horizondeck/catalog.json` can add explicit thumbnail and attribution URLs
+`.deckscape/catalog.json` can add explicit thumbnail and attribution URLs
 without changing the source or category model; arbitrary repositories will
 continue to use the data-saver path with local thumbnail generation as the
 fallback.

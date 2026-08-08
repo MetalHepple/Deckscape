@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HorizonDeck"
+rootProject.name = "Deckscape"
 include(":app")

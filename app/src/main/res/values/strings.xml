@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HorizonDeck</string>
-    <string name="wallpaper_description">A head-unit wallpaper gallery backed by user-selected GitHub repositories.</string>
+    <string name="app_name">Deckscape</string>
+    <string name="wallpaper_description">A landscape live-wallpaper gallery backed by user-selected GitHub repositories.</string>
     <string name="no_preview">NO PREVIEW</string>
     <string name="too_large">Too large</string>
 </resources>

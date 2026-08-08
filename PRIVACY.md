@@ -1,6 +1,6 @@
 # Privacy
 
-HorizonDeck does not include analytics, advertising, user accounts, telemetry,
+Deckscape does not include analytics, advertising, user accounts, telemetry,
 location access, or third-party tracking SDKs.
 
 The app connects directly over HTTPS to:
@@ -20,7 +20,7 @@ GitHub and, while Data saver is enabled, wsrv.nl receive ordinary network
 metadata such as the requesting IP address and user agent. The raw GitHub image
 URL is included in the wsrv.nl preview request so that service can resize it.
 Data saver is enabled by default and can be disabled from **Info**; cached
-previews can be cleared there as well. HorizonDeck's developer does not operate
+previews can be cleared there as well. Deckscape's developer does not operate
 an intermediary server.
 
-Last updated: 2026-08-07.
+Last updated: 2026-08-08.

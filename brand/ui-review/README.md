@@ -1,4 +1,4 @@
-# HorizonDeck UI redesign record
+# Deckscape UI redesign record
 
 This folder records the image-generation-assisted 1.1 interface redesign at
 the target 1920×1080, 240 dpi head-unit profile.
@@ -19,6 +19,9 @@ the target 1920×1080, 240 dpi head-unit profile.
 
 The screenshots contain public catalog previews only. They were captured in an
 isolated emulator and contain no vehicle, account, map, or location data.
+
+The prompt below is retained verbatim as provenance and therefore uses the
+application's former HorizonDeck name.
 
 ## Exact generation prompt
 

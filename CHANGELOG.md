@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 — 2026-08-08
+
+- Renamed the application and project to Deckscape.
+- Changed the Android application ID and Java namespace to `uk.darkbyte.deckscape`.
+- Centralized product/version metadata for UI labels and network user agents.
+- Hardened GitHub redirect validation, cache initialization, preview lifecycle
+  cleanup, custom-source recovery, and installed-image decoding.
+- Added package and API documentation plus identity-focused unit tests.
+- Adopted the MIT License and expanded the GitHub README and community files.
+
 ## 1.2.1 — 2026-08-08
 
 - Matched the wallpaper-status control to the 48 dp height, padding, border,
@@ -25,7 +35,7 @@
 
 ## 1.0.0 — 2026-08-07
 
-- Production HorizonDeck brand and landscape head-unit interface.
+- Production landscape head-unit interface under the original HorizonDeck name.
 - Wallz, elementary, and KDE Breeze default GitHub sources.
 - User-added public repositories with branch and folder validation.
 - Folder categories, recursive all-wallpaper view, and local search.

@@ -1,6 +1,6 @@
 # Third-party notices
 
-HorizonDeck does not bundle or redistribute wallpaper artwork from the sources
+Deckscape does not bundle or redistribute wallpaper artwork from the sources
 below. It stores source definitions and downloads a raw file only after a user
 chooses to preview or apply it.
 
@@ -9,7 +9,7 @@ chooses to preview or apply it.
 [images.weserv.nl](https://github.com/weserv/images) powers the optional
 bandwidth-saving previews at `wsrv.nl`. Its source is available under the
 BSD 3-Clause licence. The hosted service is used as-is and is not operated by
-the HorizonDeck project. Users can disable it from **Info → Data saver**.
+the Deckscape project. Users can disable it from **Info → Data saver**.
 
 ## Default catalogs
 
@@ -36,8 +36,15 @@ the HorizonDeck project. Users can disable it from **Info → Data saver**.
 Users can add other public repositories. They are responsible for checking the
 source and creator terms that apply to any downloaded image.
 
+## Documentation screenshots
+
+Screenshots under `docs/images` and `brand/ui-review` show reduced public catalog
+previews inside the running interface. Those wallpaper images are documentation
+examples only and are not covered by Deckscape's MIT License. Their respective
+source and creator terms continue to apply.
+
 ## Brand artwork
 
-The HorizonDeck launcher icon was generated specifically for this project with
+The Deckscape launcher icon was generated specifically for this project with
 OpenAI's image-generation tooling and then locally resized and masked for the
 Android density variants. It contains no third-party logo or vehicle mark.
