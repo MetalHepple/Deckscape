@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 — 2026-08-08
+
+- Matched the wallpaper-status control to the 48 dp height, padding, border,
+  corner radius, and spacing used by the adjacent top-bar controls.
+
 ## 1.2.0 — 2026-08-08
 
 - Added Vyrx Wallpapers, Aesthetic Wallpapers, Wall-E-Desk, and Terminal

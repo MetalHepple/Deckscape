@@ -154,9 +154,11 @@ public final class MainActivity extends Activity {
 
         activeIndicator = Ui.title(this, "CHECKING", 12);
         activeIndicator.setGravity(Gravity.CENTER);
-        activeIndicator.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        activeIndicator.setMinHeight(Ui.dp(this, 48));
+        activeIndicator.setMinimumHeight(Ui.dp(this, 48));
+        activeIndicator.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), 0);
         top.addView(activeIndicator, new LinearLayout.LayoutParams(
-                Ui.dp(this, 132), Ui.dp(this, 42)));
+                Ui.dp(this, 132), Ui.dp(this, 48)));
 
         Spinner interval = new Spinner(this);
         ArrayAdapter<String> intervals = new ArrayAdapter<String>(this,
@@ -172,7 +174,10 @@ public final class MainActivity extends Activity {
         intervals.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         interval.setAdapter(intervals);
         interval.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 12), Ui.DIVIDER, 1));
-        top.addView(interval, new LinearLayout.LayoutParams(Ui.dp(this, 148), Ui.dp(this, 48)));
+        LinearLayout.LayoutParams intervalParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 148), Ui.dp(this, 48));
+        intervalParams.leftMargin = Ui.dp(this, 8);
+        top.addView(interval, intervalParams);
         configureInterval(interval);
 
         Button next = Ui.button(this, "▷  Next", false);
@@ -569,7 +574,7 @@ public final class MainActivity extends Activity {
         activeIndicator.setText(active ? "WALLPAPER ON" : "WALLPAPER OFF");
         activeIndicator.setTextColor(active ? Ui.CYAN : Ui.CORAL);
         activeIndicator.setBackground(Ui.rounded(active ? Ui.CYAN_DARK : Ui.SURFACE_HIGH,
-                Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, 1));
+                Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, Ui.dp(this, 1)));
         activateButton.setText(active ? "Active" : "Activate");
         activateButton.setEnabled(!active);
         if (gridAdapter != null) gridAdapter.refreshLibraryState(active);
@@ -728,7 +733,7 @@ public final class MainActivity extends Activity {
         double previewMb = previewCache.diskBytes() / (1024.0 * 1024.0);
         double libraryMb = WallpaperStore.totalBytes(this) / (1024.0 * 1024.0);
         String message = String.format(Locale.ROOT,
-                "HorizonDeck 1.2\n\n"
+                "HorizonDeck 1.2.1\n\n"
                         + "• Public GitHub repositories only\n"
                         + "• Folder categories use a representative wallpaper cover\n"
                         + "• Download and active states stay visible on each card\n"
