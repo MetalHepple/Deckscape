@@ -2,8 +2,6 @@
 <resources>
     <string name="app_name">HorizonDeck</string>
     <string name="wallpaper_description">A head-unit wallpaper gallery backed by user-selected GitHub repositories.</string>
-    <string name="breadcrumb_format">%1$s  /  %2$s</string>
     <string name="no_preview">NO PREVIEW</string>
-    <string name="use_wallpaper">Use</string>
     <string name="too_large">Too large</string>
 </resources>

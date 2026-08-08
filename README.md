@@ -14,6 +14,10 @@ The first hardware target is a BYD DiLink 3.0 unit running Android 10, but the
 app does not call private BYD APIs and is intended to remain useful on other
 Android devices that support live wallpapers.
 
+<p align="center">
+  <img src="brand/ui-review/implemented-gallery.png" width="960" alt="HorizonDeck wallpaper gallery">
+</p>
+
 ## Highlights
 
 - Landscape-first, four-column interface with large head-unit touch targets.
@@ -23,7 +27,7 @@ Android devices that support live wallpapers.
 - Repository folders appear as categories; **All wallpapers** builds a flat,
   recursive view only when requested.
 - JPEG, PNG, WebP, and animated GIF support.
-- One-touch **Set** downloads, validates, selects, and applies an item. Android
+- One-touch **Apply** downloads, validates, selects, and applies an item. Android
   requires one system confirmation the first time the live wallpaper is used.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF animation is capped at 10 fps and pauses completely while hidden.

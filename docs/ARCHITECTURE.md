@@ -10,7 +10,7 @@ GitHub Contents / Git Trees API
               │
       ┌───────┴────────┐
       ▼                ▼
-visible card      user presses Set
+visible card    user presses Apply
       │                │
       ▼                ▼
 wsrv.nl thumbnail bounded raw download

@@ -8,10 +8,14 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextWatcher;
+import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -62,6 +66,7 @@ public final class MainActivity extends Activity {
     private int requestGeneration;
 
     private LinearLayout categoryStrip;
+    private HorizontalScrollView categoryScroll;
     private GridView grid;
     private TextView breadcrumb;
     private TextView status;
@@ -106,28 +111,22 @@ public final class MainActivity extends Activity {
         root.setBackgroundColor(Ui.BACKGROUND);
 
         root.addView(buildTopBar(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 78)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.HORIZONTAL);
-        body.setPadding(Ui.dp(this, 12), Ui.dp(this, 10),
-                Ui.dp(this, 12), Ui.dp(this, 6));
         root.addView(body, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        body.addView(buildSourceRail(), new LinearLayout.LayoutParams(Ui.dp(this, 232),
+        body.addView(buildSourceRail(), new LinearLayout.LayoutParams(Ui.dp(this, 218),
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout content = buildContent();
         LinearLayout.LayoutParams contentParams = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         contentParams.leftMargin = Ui.dp(this, 12);
+        contentParams.rightMargin = Ui.dp(this, 12);
         body.addView(content, contentParams);
-
-        status = Ui.text(this, "Starting HorizonDeck…", 13, Ui.MUTED);
-        status.setPadding(Ui.dp(this, 16), 0, Ui.dp(this, 16), Ui.dp(this, 2));
-        root.addView(status, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 32)));
         return root;
     }
 
@@ -135,21 +134,19 @@ public final class MainActivity extends Activity {
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(Ui.dp(this, 16), Ui.dp(this, 8),
-                Ui.dp(this, 16), Ui.dp(this, 8));
+        top.setPadding(Ui.dp(this, 16), Ui.dp(this, 6),
+                Ui.dp(this, 16), Ui.dp(this, 6));
         top.setBackgroundColor(Ui.NAV);
 
         ImageView mark = new ImageView(this);
         mark.setImageResource(uk.darkbyte.horizondeck.R.drawable.horizondeck_mark);
         mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        top.addView(mark, new LinearLayout.LayoutParams(Ui.dp(this, 58), Ui.dp(this, 58)));
+        top.addView(mark, new LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)));
 
         LinearLayout brand = new LinearLayout(this);
-        brand.setOrientation(LinearLayout.VERTICAL);
         brand.setGravity(Gravity.CENTER_VERTICAL);
         brand.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 12), 0);
-        brand.addView(Ui.title(this, "HorizonDeck", 24));
-        brand.addView(Ui.text(this, "Wallpapers for the road", 12, Ui.MUTED));
+        brand.addView(Ui.title(this, "HorizonDeck", 22));
         top.addView(brand, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
@@ -157,14 +154,15 @@ public final class MainActivity extends Activity {
         activeIndicator.setGravity(Gravity.CENTER);
         activeIndicator.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
         top.addView(activeIndicator, new LinearLayout.LayoutParams(
-                Ui.dp(this, 122), Ui.dp(this, 40)));
+                Ui.dp(this, 110), Ui.dp(this, 42)));
 
         Spinner interval = new Spinner(this);
         ArrayAdapter<String> intervals = new ArrayAdapter<String>(this,
                 android.R.layout.simple_spinner_item, INTERVAL_LABELS) {
             @Override
             public View getView(int position, View convertView, ViewGroup parent) {
-                TextView view = Ui.text(MainActivity.this, getItem(position), 15, Ui.TEXT);
+                TextView view = Ui.text(MainActivity.this,
+                        "↻  " + getItem(position), 14, Ui.TEXT);
                 view.setPadding(Ui.dp(MainActivity.this, 12), 0, Ui.dp(MainActivity.this, 8), 0);
                 return view;
             }
@@ -172,30 +170,30 @@ public final class MainActivity extends Activity {
         intervals.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         interval.setAdapter(intervals);
         interval.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 12), Ui.DIVIDER, 1));
-        top.addView(interval, new LinearLayout.LayoutParams(Ui.dp(this, 132), Ui.dp(this, 48)));
+        top.addView(interval, new LinearLayout.LayoutParams(Ui.dp(this, 148), Ui.dp(this, 48)));
         configureInterval(interval);
 
-        Button next = Ui.button(this, "Next", false);
+        Button next = Ui.button(this, "▷  Next", false);
         next.setOnClickListener(view -> {
             sendBroadcast(new Intent(WallpaperEngineService.ACTION_NEXT).setPackage(getPackageName()));
             setStatus("Advanced to the next downloaded wallpaper.");
         });
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48));
+                Ui.dp(this, 96), Ui.dp(this, 48));
         actionParams.leftMargin = Ui.dp(this, 8);
         top.addView(next, actionParams);
 
         activateButton = Ui.button(this, "Activate", true);
         activateButton.setOnClickListener(view -> activateWallpaper());
         LinearLayout.LayoutParams activateParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48));
+                Ui.dp(this, 112), Ui.dp(this, 48));
         activateParams.leftMargin = Ui.dp(this, 8);
         top.addView(activateButton, activateParams);
 
         Button info = Ui.button(this, "Info", false);
         info.setOnClickListener(view -> showInfo());
         LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 48));
+                Ui.dp(this, 64), Ui.dp(this, 48));
         infoParams.leftMargin = Ui.dp(this, 8);
         top.addView(info, infoParams);
         return top;
@@ -204,11 +202,11 @@ public final class MainActivity extends Activity {
     private View buildSourceRail() {
         LinearLayout rail = new LinearLayout(this);
         rail.setOrientation(LinearLayout.VERTICAL);
-        rail.setPadding(Ui.dp(this, 12), Ui.dp(this, 12),
+        rail.setPadding(Ui.dp(this, 12), Ui.dp(this, 14),
                 Ui.dp(this, 12), Ui.dp(this, 12));
-        rail.setBackground(Ui.rounded(Ui.NAV, Ui.dp(this, 16), Ui.DIVIDER, 1));
+        rail.setBackgroundColor(Ui.NAV);
 
-        TextView heading = Ui.title(this, "Sources", 19);
+        TextView heading = Ui.title(this, "Sources", 18);
         rail.addView(heading, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 38)));
 
@@ -226,12 +224,15 @@ public final class MainActivity extends Activity {
         rail.addView(sourceList, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        openSourceButton = Ui.button(this, "Open on GitHub", false);
+        openSourceButton = Ui.button(this, "↗  View on GitHub", false);
         openSourceButton.setOnClickListener(view -> openSelectedSource());
         rail.addView(openSourceButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
-        Button add = Ui.button(this, "+ Add repository", true);
+        Button add = Ui.button(this, "＋  Add source", false);
+        add.setTextColor(Ui.CYAN);
+        add.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 12),
+                Ui.DIVIDER, Ui.dp(this, 1)));
         add.setOnClickListener(view -> showAddSourceDialog());
         LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
@@ -247,22 +248,36 @@ public final class MainActivity extends Activity {
         LinearLayout toolbar = new LinearLayout(this);
         toolbar.setOrientation(LinearLayout.HORIZONTAL);
         toolbar.setGravity(Gravity.CENTER_VERTICAL);
-        backButton = Ui.button(this, "Back", false);
+        toolbar.setPadding(0, Ui.dp(this, 6), 0, Ui.dp(this, 2));
+        backButton = Ui.button(this, "‹", false);
+        backButton.setTextSize(26);
+        backButton.setContentDescription("Back");
         backButton.setOnClickListener(view -> navigateUp());
         toolbar.addView(backButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 46)));
+                Ui.dp(this, 44), Ui.dp(this, 48)));
 
-        breadcrumb = Ui.title(this, "Choose a source", 20);
-        breadcrumb.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
-        toolbar.addView(breadcrumb, new LinearLayout.LayoutParams(0, Ui.dp(this, 46), 1f));
+        LinearLayout location = new LinearLayout(this);
+        location.setOrientation(LinearLayout.VERTICAL);
+        location.setGravity(Gravity.CENTER_VERTICAL);
+        location.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        breadcrumb = Ui.title(this, "Choose a source", 19);
+        breadcrumb.setSingleLine(true);
+        location.addView(breadcrumb, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+        status = Ui.text(this, "Starting HorizonDeck…", 11, Ui.MUTED);
+        status.setSingleLine(true);
+        status.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        location.addView(status, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 20)));
+        toolbar.addView(location, new LinearLayout.LayoutParams(0, Ui.dp(this, 52), 1f));
 
         progress = new ProgressBar(this);
         progress.setIndeterminate(true);
         progress.setVisibility(View.GONE);
-        toolbar.addView(progress, new LinearLayout.LayoutParams(Ui.dp(this, 42), Ui.dp(this, 42)));
+        toolbar.addView(progress, new LinearLayout.LayoutParams(Ui.dp(this, 36), Ui.dp(this, 36)));
 
         search = new EditText(this);
-        search.setHint("Search this view");
+        search.setHint("Search wallpapers");
         search.setHintTextColor(Ui.MUTED);
         search.setTextColor(Ui.TEXT);
         search.setSingleLine(true);
@@ -277,24 +292,26 @@ public final class MainActivity extends Activity {
             @Override public void afterTextChanged(Editable s) {}
         });
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 220), Ui.dp(this, 46));
+                Ui.dp(this, 228), Ui.dp(this, 48));
         searchParams.leftMargin = Ui.dp(this, 8);
         toolbar.addView(search, searchParams);
 
-        Button refresh = Ui.button(this, "Refresh", false);
+        Button refresh = Ui.button(this, "↻", false);
+        refresh.setTextSize(20);
+        refresh.setContentDescription("Refresh wallpapers");
         refresh.setOnClickListener(view -> {
             catalogClient.clearCache();
             previewCache.clear();
             if (allMode) loadAll(); else loadDirectory(currentPath);
         });
         LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 46));
+                Ui.dp(this, 48), Ui.dp(this, 48));
         refreshParams.leftMargin = Ui.dp(this, 8);
         toolbar.addView(refresh, refreshParams);
         content.addView(toolbar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 62)));
 
-        HorizontalScrollView categoryScroll = new HorizontalScrollView(this);
+        categoryScroll = new HorizontalScrollView(this);
         categoryScroll.setHorizontalScrollBarEnabled(false);
         categoryStrip = new LinearLayout(this);
         categoryStrip.setOrientation(LinearLayout.HORIZONTAL);
@@ -302,7 +319,7 @@ public final class MainActivity extends Activity {
         categoryScroll.addView(categoryStrip, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
         content.addView(categoryScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 54)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 50)));
 
         grid = new GridView(this);
         grid.setNumColumns(4);
@@ -310,7 +327,7 @@ public final class MainActivity extends Activity {
         grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
         grid.setHorizontalSpacing(Ui.dp(this, 8));
         grid.setVerticalSpacing(Ui.dp(this, 8));
-        grid.setPadding(Ui.dp(this, 2), Ui.dp(this, 4), Ui.dp(this, 2), Ui.dp(this, 10));
+        grid.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
         grid.setClipToPadding(false);
         grid.setSelector(android.R.color.transparent);
         gridAdapter = new WallpaperGridAdapter(this, previewCache, this::handleItemAction);
@@ -351,8 +368,10 @@ public final class MainActivity extends Activity {
         activeSource = source;
         currentPath = "";
         allMode = false;
+        rootCategories.clear();
         search.setText("");
         sourceAdapter.setSelected(source);
+        rebuildCategoryStrip();
         setStatus("Loading " + source.displayName + "…");
         loadDirectory("");
     }
@@ -376,9 +395,9 @@ public final class MainActivity extends Activity {
                         for (CatalogItem item : page.items) {
                             if (item.isDirectory()) rootCategories.add(item);
                         }
-                        rebuildCategoryStrip();
                     }
                     gridAdapter.setData(source, page.items);
+                    rebuildCategoryStrip();
                     updateBreadcrumb();
                     setLoading(false);
                     String note = page.staleCache ? " • offline cache" : "";
@@ -405,6 +424,7 @@ public final class MainActivity extends Activity {
                     allMode = true;
                     currentPath = "";
                     gridAdapter.setData(source, page.items);
+                    rebuildCategoryStrip();
                     updateBreadcrumb();
                     setLoading(false);
                     String note = page.truncated ? " • GitHub index truncated" : "";
@@ -428,22 +448,29 @@ public final class MainActivity extends Activity {
 
     private void rebuildCategoryStrip() {
         categoryStrip.removeAllViews();
-        addCategoryButton("Overview", () -> loadDirectory(""));
-        addCategoryButton("All wallpapers", this::loadAll);
+        addCategoryButton("Overview", !allMode && currentPath.isEmpty(),
+                () -> loadDirectory(""));
+        addCategoryButton("All wallpapers", allMode, this::loadAll);
         for (CatalogItem category : rootCategories) {
-            addCategoryButton(category.name,
+            String relativePath = activeSource.relativePath(category.path);
+            boolean selected = !allMode && (currentPath.equals(relativePath)
+                    || currentPath.startsWith(relativePath + "/"));
+            addCategoryButton(category.name, selected,
                     () -> loadDirectory(activeSource.relativePath(category.path)));
         }
     }
 
-    private void addCategoryButton(String label, Runnable action) {
-        Button button = Ui.button(this, label, false);
-        button.setTextSize(14);
+    private void addCategoryButton(String label, boolean selected, Runnable action) {
+        Button button = Ui.chip(this, label, selected);
         button.setOnClickListener(view -> action.run());
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 44));
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 40));
         params.rightMargin = Ui.dp(this, 8);
         categoryStrip.addView(button, params);
+        if (selected) {
+            categoryScroll.post(() -> categoryScroll.smoothScrollTo(
+                    Math.max(0, button.getLeft() - Ui.dp(this, 12)), 0));
+        }
     }
 
     private void handleItemAction(CatalogItem item) {
@@ -505,13 +532,19 @@ public final class MainActivity extends Activity {
     private void updateBreadcrumb() {
         String location = allMode ? "All wallpapers"
                 : currentPath.isEmpty() ? "Overview" : currentPath;
-        breadcrumb.setText(getString(R.string.breadcrumb_format, activeSource.displayName, location));
-        backButton.setEnabled(allMode || !currentPath.isEmpty());
+        String value = activeSource.displayName + "  ›  " + location;
+        SpannableString styled = new SpannableString(value);
+        styled.setSpan(new ForegroundColorSpan(Ui.CYAN), 0,
+                activeSource.displayName.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        breadcrumb.setText(styled);
+        boolean canGoBack = allMode || !currentPath.isEmpty();
+        backButton.setEnabled(canGoBack);
+        backButton.setVisibility(canGoBack ? View.VISIBLE : View.GONE);
     }
 
     private void updateActiveState() {
         boolean active = isWallpaperActive();
-        activeIndicator.setText(active ? "LIVE  •  ACTIVE" : "NOT ACTIVE");
+        activeIndicator.setText(active ? "ACTIVE" : "NOT ACTIVE");
         activeIndicator.setTextColor(active ? Ui.CYAN : Ui.CORAL);
         activeIndicator.setBackground(Ui.rounded(active ? Ui.CYAN_DARK : Ui.SURFACE_HIGH,
                 Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, 1));
@@ -551,64 +584,101 @@ public final class MainActivity extends Activity {
     }
 
     private void showAddSourceDialog() {
-        int pad = Ui.dp(this, 20);
-        LinearLayout fields = new LinearLayout(this);
-        fields.setOrientation(LinearLayout.VERTICAL);
-        fields.setPadding(pad, Ui.dp(this, 8), pad, 0);
+        int pad = Ui.dp(this, 24);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(pad, Ui.dp(this, 20), pad, Ui.dp(this, 18));
+        panel.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 18),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+
+        panel.addView(Ui.title(this, "Add wallpaper source", 22),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 36)));
+        TextView description = Ui.text(this,
+                "Connect a public GitHub repository. Folders become categories automatically.",
+                13, Ui.MUTED);
+        description.setMaxLines(2);
+        panel.addView(description, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 46)));
 
         EditText repository = dialogField("GitHub URL or owner/repository");
         EditText folder = dialogField("Starting folder (optional)");
         EditText name = dialogField("Display name (optional)");
-        fields.addView(repository);
-        fields.addView(folder);
-        fields.addView(name);
+        addDialogField(panel, repository);
+        addDialogField(panel, folder);
+        addDialogField(panel, name);
 
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("Add wallpaper repository")
-                .setMessage("Public GitHub repositories only. Folder names become categories automatically.")
-                .setView(fields)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Add", null)
-                .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-                .setOnClickListener(view -> {
-                    Button add = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-                    add.setEnabled(false);
-                    setStatus("Validating GitHub repository…");
-                    io.execute(() -> {
-                        try {
-                            RepositorySourceParser.ParsedSource parsed =
-                                    RepositorySourceParser.parse(repository.getText().toString());
-                            RepositorySource source = catalogClient.resolveSource(parsed,
-                                    name.getText().toString(), folder.getText().toString());
-                            sourceStore.add(source);
-                            runOnUiThread(() -> {
-                                dialog.dismiss();
-                                reloadSources();
-                                selectSource(source);
-                                hideKeyboard();
-                            });
-                        } catch (Exception exception) {
-                            runOnUiThread(() -> {
-                                add.setEnabled(true);
-                                repository.setError(readableMessage(exception));
-                                setStatus("Repository not added: " + readableMessage(exception));
-                            });
-                        }
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button cancel = Ui.button(this, "Cancel", false);
+        Button add = Ui.button(this, "Add source", true);
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 106), Ui.dp(this, 46));
+        LinearLayout.LayoutParams addParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 122), Ui.dp(this, 46));
+        addParams.leftMargin = Ui.dp(this, 10);
+        actions.addView(cancel, actionParams);
+        actions.addView(add, addParams);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58));
+        actionsParams.topMargin = Ui.dp(this, 8);
+        panel.addView(actions, actionsParams);
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        add.setOnClickListener(view -> {
+            add.setEnabled(false);
+            setStatus("Validating GitHub repository…");
+            io.execute(() -> {
+                try {
+                    RepositorySourceParser.ParsedSource parsed =
+                            RepositorySourceParser.parse(repository.getText().toString());
+                    RepositorySource source = catalogClient.resolveSource(parsed,
+                            name.getText().toString(), folder.getText().toString());
+                    sourceStore.add(source);
+                    runOnUiThread(() -> {
+                        dialog.dismiss();
+                        reloadSources();
+                        selectSource(source);
+                        hideKeyboard();
                     });
-                }));
+                } catch (Exception exception) {
+                    runOnUiThread(() -> {
+                        add.setEnabled(true);
+                        repository.setError(readableMessage(exception));
+                        setStatus("Repository not added: " + readableMessage(exception));
+                    });
+                }
+            });
+        });
         dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout(Ui.dp(this, 570), ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private EditText dialogField(String hint) {
         EditText field = new EditText(this);
         field.setHint(hint);
+        field.setHintTextColor(Ui.MUTED);
+        field.setTextColor(Ui.TEXT);
         field.setSingleLine(true);
-        field.setTextSize(17);
-        field.setPadding(Ui.dp(this, 12), Ui.dp(this, 6),
-                Ui.dp(this, 12), Ui.dp(this, 6));
+        field.setTextSize(15);
+        field.setPadding(Ui.dp(this, 14), 0,
+                Ui.dp(this, 12), 0);
         field.setMinHeight(Ui.dp(this, 52));
+        field.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
         return field;
+    }
+
+    private void addDialogField(LinearLayout panel, EditText field) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52));
+        params.topMargin = Ui.dp(this, 10);
+        panel.addView(field, params);
     }
 
     private void promptRemoveSource(RepositorySource source) {
@@ -617,23 +687,25 @@ public final class MainActivity extends Activity {
                     Toast.LENGTH_SHORT).show();
             return;
         }
-        new AlertDialog.Builder(this)
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Remove " + source.displayName + "?")
                 .setMessage("Downloaded wallpapers remain in your local library.")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("Remove", (dialog, which) -> {
+                .setPositiveButton("Remove", (ignoredDialog, which) -> {
                     sourceStore.remove(source);
                     reloadSources();
                     if (!sources.isEmpty()) selectSource(sources.get(0));
                 })
-                .show();
+                .create();
+        dialog.show();
+        styleDialog(dialog);
     }
 
     private void showInfo() {
         double previewMb = previewCache.diskBytes() / (1024.0 * 1024.0);
         double libraryMb = WallpaperStore.totalBytes(this) / (1024.0 * 1024.0);
         String message = String.format(Locale.ROOT,
-                "HorizonDeck 1.0\n\n"
+                "HorizonDeck 1.1\n\n"
                         + "• Public GitHub repositories only\n"
                         + "• Folders are shown as categories\n"
                         + "• 480×270 previews are cached locally\n"
@@ -656,15 +728,33 @@ public final class MainActivity extends Activity {
                         ? "Data saver: on" : "Data saver: off", null)
                 .setPositiveButton("Done", null)
                 .create();
-        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
-                .setOnClickListener(view -> {
+        dialog.setOnShowListener(ignored -> {
+            styleDialog(dialog);
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
                     boolean enabled = !previewCache.isDataSaverEnabled();
                     previewCache.setDataSaverEnabled(enabled);
                     dialog.dismiss();
                     setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
                     showInfo();
-                }));
+                });
+        });
         dialog.show();
+    }
+
+    private void styleDialog(AlertDialog dialog) {
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 18),
+                    Ui.DIVIDER, Ui.dp(this, 1)));
+        }
+        TextView message = dialog.findViewById(android.R.id.message);
+        if (message != null) message.setTextColor(Ui.MUTED);
+        Button positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+        Button negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+        Button neutral = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+        if (positive != null) positive.setTextColor(Ui.CYAN);
+        if (negative != null) negative.setTextColor(Ui.MUTED);
+        if (neutral != null) neutral.setTextColor(Ui.CYAN);
     }
 
     private void setLoading(boolean loading) {

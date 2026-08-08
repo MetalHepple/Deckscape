@@ -12,8 +12,9 @@ import android.widget.TextView;
 final class Ui {
     static final int BACKGROUND = Color.rgb(7, 17, 27);
     static final int NAV = Color.rgb(8, 19, 31);
-    static final int SURFACE = Color.rgb(14, 26, 40);
-    static final int SURFACE_HIGH = Color.rgb(20, 37, 55);
+    static final int SURFACE = Color.rgb(13, 27, 42);
+    static final int SURFACE_HIGH = Color.rgb(20, 38, 56);
+    static final int SURFACE_SELECTED = Color.rgb(17, 55, 69);
     static final int CYAN = Color.rgb(66, 217, 232);
     static final int CYAN_DARK = Color.rgb(19, 74, 88);
     static final int CORAL = Color.rgb(255, 122, 89);
@@ -45,27 +46,49 @@ final class Ui {
     static Button button(Context context, String label, boolean primary) {
         Button button = new Button(context);
         button.setText(label);
-        button.setTextSize(15);
+        button.setTextSize(14);
         button.setTextColor(primary ? Color.rgb(5, 21, 29) : TEXT);
         button.setAllCaps(false);
         button.setGravity(Gravity.CENTER);
         button.setMinHeight(dp(context, 48));
         button.setMinimumHeight(dp(context, 48));
         button.setPadding(dp(context, 14), 0, dp(context, 14), 0);
-        button.setBackground(rounded(primary ? CYAN : SURFACE_HIGH, 14, primary ? CYAN : DIVIDER, 1));
+        button.setBackground(rounded(primary ? CYAN : SURFACE_HIGH, dp(context, 12),
+                primary ? CYAN : DIVIDER, dp(context, 1)));
         return button;
     }
 
-    static GradientDrawable rounded(int color, float radiusDp) {
+    static Button chip(Context context, String label, boolean selected) {
+        Button button = button(context, label, false);
+        button.setTextSize(13);
+        button.setTextColor(selected ? CYAN : TEXT);
+        button.setPadding(dp(context, 16), 0, dp(context, 16), 0);
+        button.setBackground(rounded(selected ? SURFACE_SELECTED : SURFACE_HIGH,
+                dp(context, 10), selected ? CYAN : DIVIDER, dp(context, 1)));
+        return button;
+    }
+
+    static Button actionButton(Context context, String label, boolean accent) {
+        Button button = button(context, label, false);
+        button.setTextSize(12);
+        button.setTypeface(Typeface.create("sans", Typeface.BOLD));
+        button.setTextColor(accent ? CYAN : TEXT);
+        button.setPadding(dp(context, 12), 0, dp(context, 12), 0);
+        button.setBackground(rounded(SURFACE_HIGH, dp(context, 10),
+                accent ? CYAN : DIVIDER, dp(context, 1)));
+        return button;
+    }
+
+    static GradientDrawable rounded(int color, float radiusPx) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
-        drawable.setCornerRadius(radiusDp);
+        drawable.setCornerRadius(radiusPx);
         return drawable;
     }
 
-    static GradientDrawable rounded(int color, float radiusDp, int strokeColor, int strokeDp) {
-        GradientDrawable drawable = rounded(color, radiusDp);
-        drawable.setStroke(strokeDp, strokeColor);
+    static GradientDrawable rounded(int color, float radiusPx, int strokeColor, int strokePx) {
+        GradientDrawable drawable = rounded(color, radiusPx);
+        drawable.setStroke(strokePx, strokeColor);
         return drawable;
     }
 
