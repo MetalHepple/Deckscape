@@ -22,6 +22,13 @@ enabled, contact the repository owner without publishing exploit details.
   the optional `wsrv.nl` preview endpoint.
 - Redirect destinations, content types where applicable, response sizes, and
   decoded images are validated before data is trusted.
+- Updates come only from the fixed `MetalHepple/Deckscape` GitHub release feed.
+  Stable versions, release pages, asset names, redirect hosts, byte limits,
+  SHA-256, package identity, increasing version code, and signer identity are
+  checked before Android's installer can be opened.
+- Release builds additionally pin the production signing-certificate SHA-256.
+  Update APKs are shared with Android through one narrowly scoped, read-only
+  content URI; the provider is not exported.
 - Streamed byte limits and image-dimension limits protect download and preview paths.
 - App-private wallpaper storage; no shared-storage permission or cloud backup.
 - Android's normal live-wallpaper activation flow; no manufacturer databases or

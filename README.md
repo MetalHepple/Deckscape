@@ -28,7 +28,7 @@ devices that support live wallpapers and allow APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.3.0.apk"><strong>Download Deckscape 1.3.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.4.0.apk"><strong>Download Deckscape 1.4.0 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -39,8 +39,25 @@ prompted.
 The release page includes a SHA-256 checksum alongside the APK so downloads can
 be verified independently.
 
+See [CHANGELOG.md](CHANGELOG.md) for changes since the first public release.
+
 Android owns the final live-wallpaper confirmation step. Existing installations
 can be updated in place with later Deckscape releases from this repository.
+
+### App updates
+
+Deckscape checks this repository's latest stable release at most once per day
+while the app is open. When a newer version is available, its small APK is
+downloaded automatically over any available internet connection, including
+metered or mobile-data connections. The app never installs an update silently:
+open **Update** and press **Install update**, then approve Android's ordinary
+package-installer screens.
+
+Before offering the install, Deckscape verifies the release asset's SHA-256,
+package name, version, and signing certificate. Android may require Deckscape
+to be allowed as an installation source the first time. Some head units revert
+to their stock wallpaper while an app update is installed; if that happens,
+open Deckscape and activate its live wallpaper again.
 
 ## Screenshots
 
@@ -51,11 +68,23 @@ can be updated in place with later Deckscape releases from this repository.
   </tr>
   <tr>
     <td align="center"><strong>Image-backed categories</strong></td>
-    <td align="center"><strong>Wallpaper browsing and one-touch downloads</strong></td>
+    <td align="center"><strong>Preview and download controls</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/deckscape-active.png" alt="Deckscape active GIF and slideshow states"></td>
+    <td><img src="docs/images/deckscape-slideshow.png" alt="Deckscape downloaded slideshow library"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Clear current and slideshow states</strong></td>
+    <td align="center"><strong>Every downloaded wallpaper in one place</strong></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/deckscape-info.png" alt="Deckscape information and update status panel"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><strong>Storage, network, and update status</strong></td>
   </tr>
 </table>
-
-![Deckscape active and downloaded wallpaper states](docs/images/deckscape-active.png)
 
 Screenshots use public catalog previews in an isolated emulator at the target
 1920×1080, 240-dpi profile. They contain no vehicle, account, or location data.
@@ -67,9 +96,12 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Image-backed folder categories plus an optional recursive **All wallpapers** view.
 - JPEG, PNG, WebP, and animated GIF wallpapers.
 - One-touch downloads with progress shown inside the selected card.
-- Clear downloaded, selected, and active wallpaper states.
+- Separate **Preview** and **Download** controls, with previews cached on-device.
+- Animated GIFs play inside the in-app preview before installation.
+- Clear **In slideshow**, **Ready**, and **Now showing** wallpaper states.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF playback capped at 10 fps and paused completely while hidden.
+- Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
 - Bounded network, disk, decoder, and memory use suitable for head units.
 - No account, analytics, advertising, location access, or storage permission.
 
@@ -85,7 +117,23 @@ If the service is unavailable, Deckscape falls back to a separately bounded
 download from the selected repository and generates the preview locally. Data
 saver can be disabled and the preview cache cleared from **Info**.
 
+Opening an animated GIF preview fetches the validated original GIF within the
+12 MB animation limit and stores it in the same bounded temporary cache. It is
+not added to the slideshow unless **Download** is selected.
+
 See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
+
+## Using the slideshow
+
+Every wallpaper you download is included in the slideshow automatically; there
+is no second activation step for individual images. **Show now** changes the
+image currently displayed without removing any of the other downloads from
+rotation.
+
+When Deckscape is active, use **Slideshow** in the top bar to see the complete
+downloaded set and which image is currently showing. When it is inactive, the
+same control is labelled **Set up** and opens the one-time Android activation
+guide.
 
 ## Default catalogs
 
@@ -150,7 +198,9 @@ adb -s DEVICE_SERIAL install -r app/build/outputs/apk/debug/app-debug.apk
 
 Deckscape uses the application ID `uk.darkbyte.deckscape`. Release signing is
 intentionally not stored in this repository; configure a private keystore in
-your own release environment.
+your own release environment. Every published update must use the same release
+signing key, be named `Deckscape-VERSION.apk`, and include a matching
+`Deckscape-VERSION.apk.sha256` asset (or GitHub-provided SHA-256 digest).
 
 ## Architecture and safety
 

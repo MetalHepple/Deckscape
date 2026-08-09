@@ -10,8 +10,8 @@ android {
         applicationId = "uk.darkbyte.deckscape"
         minSdk = 28
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.3.0"
+        versionCode = 6
+        versionName = "1.4.0"
     }
 
     buildFeatures {
@@ -48,4 +48,7 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json classes are stubs in local JVM tests; use the reference
+    // implementation only on the test classpath to exercise release parsing.
+    testImplementation("org.json:json:20260522")
 }

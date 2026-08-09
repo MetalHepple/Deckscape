@@ -42,6 +42,11 @@ final class PreviewCache {
         void onResult(Bitmap bitmap, String error);
     }
 
+    /** Receives a decoded animated GIF or a user-readable failure message. */
+    interface GifCallback {
+        void onResult(Movie movie, String error);
+    }
+
     private static final int WIDTH = 480;
     private static final int HEIGHT = 270;
     private static final long MAX_DISK_BYTES = 96L * 1024 * 1024;
@@ -50,16 +55,19 @@ final class PreviewCache {
     private static final String PREFERENCES = "preview_settings";
     private static final String KEY_DATA_SAVER = "data_saver";
 
+    private final Context context;
     private final File directory;
     private final ExecutorService executor = Executors.newFixedThreadPool(3);
     private final Handler main = new Handler(Looper.getMainLooper());
     private final LruCache<String, Bitmap> memory;
     private final Map<String, List<Callback>> pending = new HashMap<>();
+    private final Map<String, List<GifCallback>> pendingGifs = new HashMap<>();
     private final SharedPreferences preferences;
     private volatile boolean dataSaverEnabled;
     private volatile boolean closed;
 
     PreviewCache(Context context) {
+        this.context = context.getApplicationContext();
         directory = new File(context.getCacheDir(), "wallpaper-previews");
         if (!directory.isDirectory()
                 && !directory.mkdirs()
@@ -77,6 +85,45 @@ final class PreviewCache {
                 return Math.max(1, value.getByteCount() / 1024);
             }
         };
+    }
+
+    /** Loads an installed GIF or downloads a bounded animation into the preview cache. */
+    void requestGif(RepositorySource source, CatalogItem item, GifCallback callback) {
+        if (closed) {
+            callback.onResult(null, "Preview cache is closed");
+            return;
+        }
+        if (!item.isGif() || !WallpaperRules.canInstall(item)) {
+            callback.onResult(null, "GIF preview is unavailable");
+            return;
+        }
+        String key = "gif:" + item.stableKey(source);
+        synchronized (pendingGifs) {
+            List<GifCallback> waiting = pendingGifs.get(key);
+            if (waiting != null) {
+                waiting.add(callback);
+                return;
+            }
+            waiting = new ArrayList<>();
+            waiting.add(callback);
+            pendingGifs.put(key, waiting);
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    Movie movie = loadGif(source, item, key);
+                    main.post(() -> deliverGif(key, movie, null));
+                } catch (Exception exception) {
+                    String message = exception.getMessage() == null
+                            ? "GIF preview unavailable" : exception.getMessage();
+                    main.post(() -> deliverGif(key, null, message));
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            synchronized (pendingGifs) {
+                pendingGifs.remove(key);
+            }
+        }
     }
 
     /** Starts or joins a preview request for one catalog item. */
@@ -124,6 +171,55 @@ final class PreviewCache {
         }
     }
 
+    /** Decodes a bounded preview from an already-downloaded wallpaper. */
+    void requestLocal(File file, Callback callback) {
+        if (closed) {
+            callback.onResult(null, "Preview cache is closed");
+            return;
+        }
+        if (!file.isFile() || !WallpaperRules.isSupportedName(file.getName())) {
+            callback.onResult(null, "Wallpaper is unavailable");
+            return;
+        }
+        String key = "local:" + file.getAbsolutePath() + ':' + file.lastModified();
+        Bitmap inMemory = memory.get(key);
+        if (inMemory != null && !inMemory.isRecycled()) {
+            callback.onResult(inMemory, null);
+            return;
+        }
+        synchronized (pending) {
+            List<Callback> waiting = pending.get(key);
+            if (waiting != null) {
+                waiting.add(callback);
+                return;
+            }
+            waiting = new ArrayList<>();
+            waiting.add(callback);
+            pending.put(key, waiting);
+        }
+        try {
+            executor.execute(() -> {
+                try {
+                    Bitmap bitmap = createThumbnail(file, file.getName());
+                    if (closed) {
+                        bitmap.recycle();
+                        return;
+                    }
+                    memory.put(key, bitmap);
+                    main.post(() -> deliver(key, bitmap, null));
+                } catch (Exception exception) {
+                    String message = exception.getMessage() == null
+                            ? "Preview unavailable" : exception.getMessage();
+                    main.post(() -> deliver(key, null, message));
+                }
+            });
+        } catch (RejectedExecutionException ignored) {
+            synchronized (pending) {
+                pending.remove(key);
+            }
+        }
+    }
+
     private void deliver(String key, Bitmap bitmap, String error) {
         List<Callback> callbacks;
         synchronized (pending) {
@@ -133,8 +229,18 @@ final class PreviewCache {
         for (Callback callback : callbacks) callback.onResult(bitmap, error);
     }
 
+    private void deliverGif(String key, Movie movie, String error) {
+        List<GifCallback> callbacks;
+        synchronized (pendingGifs) {
+            callbacks = pendingGifs.remove(key);
+        }
+        if (callbacks == null || closed) return;
+        for (GifCallback callback : callbacks) callback.onResult(movie, error);
+    }
+
     long diskBytes() {
-        File[] files = directory.listFiles(file -> file.isFile() && file.getName().endsWith(".jpg"));
+        File[] files = directory.listFiles(file -> file.isFile()
+                && (file.getName().endsWith(".jpg") || file.getName().endsWith(".gif")));
         if (files == null) return 0;
         long total = 0;
         for (File file : files) total += file.length();
@@ -156,6 +262,9 @@ final class PreviewCache {
         main.removeCallbacksAndMessages(null);
         synchronized (pending) {
             pending.clear();
+        }
+        synchronized (pendingGifs) {
+            pendingGifs.clear();
         }
         memory.evictAll();
     }
@@ -224,6 +333,53 @@ final class PreviewCache {
         }
         prune();
         return thumbnail;
+    }
+
+    private Movie loadGif(RepositorySource source, CatalogItem item, String key) throws IOException {
+        File installed = WallpaperStore.installedFile(context, source, item);
+        if (installed != null) return decodeGif(installed);
+
+        File cached = new File(directory, sha256(key) + ".gif");
+        if (cached.isFile() && (item.size < 0 || cached.length() == item.size)) {
+            try {
+                Movie movie = decodeGif(cached);
+                cached.setLastModified(System.currentTimeMillis());
+                return movie;
+            } catch (IOException ignored) {
+                cached.delete();
+            }
+        }
+
+        File partial = new File(cached.getAbsolutePath() + ".part");
+        if (partial.exists() && !partial.delete()) {
+            throw new IOException("Unable to replace partial GIF preview");
+        }
+        try {
+            downloadPreviewSource(source, item, partial, WallpaperRules.MAX_GIF_BYTES);
+            Movie movie = decodeGif(partial);
+            if (cached.exists() && !cached.delete()) {
+                throw new IOException("Unable to refresh GIF preview");
+            }
+            if (!partial.renameTo(cached)) {
+                throw new IOException("Unable to finish GIF preview");
+            }
+            prune();
+            return movie;
+        } catch (IOException exception) {
+            partial.delete();
+            throw exception;
+        }
+    }
+
+    private static Movie decodeGif(File file) throws IOException {
+        Movie movie = Movie.decodeFile(file.getAbsolutePath());
+        long pixels = movie == null ? 0L : (long) movie.width() * movie.height();
+        if (movie == null || movie.width() <= 0 || movie.height() <= 0
+                || movie.width() > 16_384 || movie.height() > 16_384
+                || pixels > 120_000_000L) {
+            throw new IOException("GIF preview could not be decoded safely");
+        }
+        return movie;
     }
 
     private static void downloadProxyPreview(RepositorySource source, CatalogItem item,
@@ -356,7 +512,8 @@ final class PreviewCache {
     }
 
     private void prune() {
-        File[] files = directory.listFiles(file -> file.isFile() && file.getName().endsWith(".jpg"));
+        File[] files = directory.listFiles(file -> file.isFile()
+                && (file.getName().endsWith(".jpg") || file.getName().endsWith(".gif")));
         if (files == null) return;
         long total = 0;
         for (File file : files) total += file.length();

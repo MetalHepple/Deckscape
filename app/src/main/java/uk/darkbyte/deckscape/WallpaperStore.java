@@ -150,6 +150,29 @@ final class WallpaperStore {
         return sourceName + "-" + revision + "-" + WallpaperRules.safeFileName(item.name);
     }
 
+    /** Returns a readable title from Deckscape's collision-resistant stored filename. */
+    static String displayName(File file) {
+        String stored = file.getName();
+        for (int index = 0; index + 14 < stored.length(); index++) {
+            if (stored.charAt(index) != '-' || stored.charAt(index + 13) != '-') continue;
+            boolean revision = true;
+            for (int offset = 1; offset <= 12; offset++) {
+                char value = Character.toLowerCase(stored.charAt(index + offset));
+                if (!((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'))) {
+                    revision = false;
+                    break;
+                }
+            }
+            if (revision) return withoutExtension(stored.substring(index + 14)).replace('_', ' ');
+        }
+        return withoutExtension(stored).replace('_', ' ');
+    }
+
+    private static String withoutExtension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
     private static void validateImage(File file, String name) throws IOException {
         int width;
         int height;

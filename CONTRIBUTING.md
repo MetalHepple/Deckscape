@@ -35,6 +35,15 @@ release build runs R8/resource shrinking to catch production-only problems.
 - Explain APK-size, memory, CPU, and bandwidth impact when adding dependencies.
 - Preserve 48 dp touch targets and test UI changes at 1920×1080, 240 dpi.
 
+## Release updates
+
+The in-app updater accepts stable releases from `MetalHepple/Deckscape` only.
+Do not change its repository, host allowlist, size limits, or certificate pin
+without a focused security review and tests. Publish every APK with the same
+production signing key and attach either a GitHub SHA-256 asset digest or a
+matching `Deckscape-VERSION.apk.sha256` file. Never commit the keystore or its
+credentials.
+
 ## Pull requests
 
 Keep each pull request focused. Include:

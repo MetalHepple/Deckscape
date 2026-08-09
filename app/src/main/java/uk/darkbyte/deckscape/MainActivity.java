@@ -32,6 +32,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
+import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -65,11 +66,15 @@ public final class MainActivity extends Activity {
     private SourceStore sourceStore;
     private GitHubCatalogClient catalogClient;
     private PreviewCache previewCache;
+    private UpdateManager updateManager;
+    private UpdateManager.State updateState;
     private SourceListAdapter sourceAdapter;
     private WallpaperGridAdapter gridAdapter;
     private RepositorySource activeSource;
     private String currentPath = "";
     private boolean allMode;
+    private boolean activationGuideShown;
+    private boolean pendingUpdateInstall;
     private int requestGeneration;
 
     private LinearLayout categoryStrip;
@@ -81,8 +86,15 @@ public final class MainActivity extends Activity {
     private EditText search;
     private ProgressBar progress;
     private Button backButton;
-    private Button activateButton;
+    private Button modeButton;
     private Button openSourceButton;
+    private Button infoButton;
+    private AlertDialog infoDialog;
+    private AlertDialog updateDialog;
+    private TextView infoUpdateStatus;
+    private TextView updateDialogStatus;
+    private ProgressBar updateDialogProgress;
+    private Button updateDialogAction;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,6 +105,9 @@ public final class MainActivity extends Activity {
         catalogClient = new GitHubCatalogClient(this);
         previewCache = new PreviewCache(this);
         setContentView(buildUi());
+        updateManager = new UpdateManager(this, this::onUpdateStateChanged);
+        updateState = updateManager.state();
+        updateManager.start();
         reloadSources();
         RepositorySource initial = lastSource();
         if (initial != null) selectSource(initial);
@@ -102,6 +117,20 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateActiveState();
+        if (pendingUpdateInstall) {
+            if (UpdateInstaller.hasInstallPermission(this)) {
+                pendingUpdateInstall = false;
+                launchVerifiedUpdate();
+            } else {
+                pendingUpdateInstall = false;
+                Toast.makeText(this, "Install permission was not enabled.",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+        if (!activationGuideShown && !isWallpaperActive()) {
+            activationGuideShown = true;
+            modeButton.post(this::showActivationGuide);
+        }
     }
 
     @Override
@@ -109,6 +138,7 @@ public final class MainActivity extends Activity {
         requestGeneration++;
         io.shutdownNow();
         previewCache.close();
+        if (updateManager != null) updateManager.close();
         super.onDestroy();
     }
 
@@ -188,7 +218,7 @@ public final class MainActivity extends Activity {
         Button next = Ui.button(this, "▷  Next", false);
         next.setOnClickListener(view -> {
             sendBroadcast(new Intent(WallpaperEngineService.ACTION_NEXT).setPackage(getPackageName()));
-            setStatus("Advanced to the next downloaded wallpaper.");
+            setStatus("Advanced to the next slideshow wallpaper.");
             next.postDelayed(() -> gridAdapter.refreshLibraryState(isWallpaperActive()), 500);
         });
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
@@ -196,19 +226,32 @@ public final class MainActivity extends Activity {
         actionParams.leftMargin = Ui.dp(this, 8);
         top.addView(next, actionParams);
 
-        activateButton = Ui.button(this, "Activate", true);
-        activateButton.setOnClickListener(view -> activateWallpaper());
+        modeButton = Ui.button(this, "Set up", true);
+        modeButton.setOnClickListener(view -> {
+            if (isWallpaperActive()) showSlideshowLibrary();
+            else showActivationGuide();
+        });
         LinearLayout.LayoutParams activateParams = new LinearLayout.LayoutParams(
                 Ui.dp(this, 112), Ui.dp(this, 48));
         activateParams.leftMargin = Ui.dp(this, 8);
-        top.addView(activateButton, activateParams);
+        top.addView(modeButton, activateParams);
 
-        Button info = Ui.button(this, "Info", false);
-        info.setOnClickListener(view -> showInfo());
+        infoButton = Ui.button(this, "Info", false);
+        infoButton.setSingleLine(true);
+        infoButton.setOnClickListener(view -> {
+            if (updateState != null && updateState.release != null
+                    && (updateState.phase == UpdateManager.Phase.DOWNLOADING
+                    || updateState.phase == UpdateManager.Phase.READY
+                    || updateState.phase == UpdateManager.Phase.ERROR)) {
+                showUpdateDialog();
+            } else {
+                showInfo();
+            }
+        });
         LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 64), Ui.dp(this, 48));
+                Ui.dp(this, 82), Ui.dp(this, 48));
         infoParams.leftMargin = Ui.dp(this, 8);
-        top.addView(info, infoParams);
+        top.addView(infoButton, infoParams);
         return top;
     }
 
@@ -343,7 +386,18 @@ public final class MainActivity extends Activity {
         grid.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
         grid.setClipToPadding(false);
         grid.setSelector(android.R.color.transparent);
-        gridAdapter = new WallpaperGridAdapter(this, previewCache, this::handleItemAction);
+        gridAdapter = new WallpaperGridAdapter(this, previewCache,
+                new WallpaperGridAdapter.Listener() {
+                    @Override
+                    public void onAction(CatalogItem item) {
+                        handleItemAction(item);
+                    }
+
+                    @Override
+                    public void onPreview(CatalogItem item) {
+                        showWallpaperPreview(item);
+                    }
+                });
         grid.setAdapter(gridAdapter);
         content.addView(grid, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -535,11 +589,15 @@ public final class MainActivity extends Activity {
                     gridAdapter.clearDownloadProgress(source, item);
                     gridAdapter.refreshLibraryState(active);
                     if (active) {
-                        setStatus("Applied " + item.name + ".");
-                        Toast.makeText(this, "Wallpaper applied", Toast.LENGTH_SHORT).show();
+                        setStatus("Now showing " + item.name
+                                + ". Other downloads remain in the slideshow.");
+                        Toast.makeText(this, "Now showing • slideshow unchanged",
+                                Toast.LENGTH_SHORT).show();
                     } else {
-                        setStatus("Downloaded. Confirm Deckscape in Android's wallpaper screen.");
-                        activateWallpaper();
+                        setStatus("Added " + item.name
+                                + " to the slideshow. Tap Set up to enable Deckscape.");
+                        Toast.makeText(this, "Added to slideshow • tap Set up",
+                                Toast.LENGTH_SHORT).show();
                     }
                 });
             } catch (Exception exception) {
@@ -576,12 +634,12 @@ public final class MainActivity extends Activity {
 
     private void updateActiveState() {
         boolean active = isWallpaperActive();
-        activeIndicator.setText(active ? "WALLPAPER ON" : "WALLPAPER OFF");
+        activeIndicator.setText(active ? "DECKSCAPE ON" : "SETUP NEEDED");
         activeIndicator.setTextColor(active ? Ui.CYAN : Ui.CORAL);
         activeIndicator.setBackground(Ui.rounded(active ? Ui.CYAN_DARK : Ui.SURFACE_HIGH,
                 Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, Ui.dp(this, 1)));
-        activateButton.setText(active ? "Active" : "Activate");
-        activateButton.setEnabled(!active);
+        modeButton.setText(active ? "Slideshow" : "Set up");
+        modeButton.setEnabled(true);
         if (gridAdapter != null) gridAdapter.refreshLibraryState(active);
     }
 
@@ -589,6 +647,254 @@ public final class MainActivity extends Activity {
         WallpaperInfo info = WallpaperManager.getInstance(this).getWallpaperInfo();
         return info != null && new ComponentName(this, WallpaperEngineService.class)
                 .equals(info.getComponent());
+    }
+
+    /** Explains Android's one-time live-wallpaper confirmation before opening it. */
+    private void showActivationGuide() {
+        if (isFinishing() || isWallpaperActive()) return;
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 24), Ui.dp(this, 20),
+                Ui.dp(this, 24), Ui.dp(this, 16));
+
+        panel.addView(Ui.title(this, "Finish setting up Deckscape", 22),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 42)));
+
+        TextView introduction = Ui.text(this,
+                "Android needs one confirmation before Deckscape can control your wallpaper.",
+                14, Ui.MUTED);
+        introduction.setMaxLines(2);
+        panel.addView(introduction, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52)));
+
+        TextView steps = Ui.text(this,
+                "1   Deckscape opens Android's wallpaper screen\n"
+                        + "2   Some head units may briefly rotate that screen to portrait\n"
+                        + "3   Tap ‘Set wallpaper’ to return here in landscape",
+                15, Ui.TEXT);
+        steps.setGravity(Gravity.CENTER_VERTICAL);
+        steps.setLineSpacing(Ui.dp(this, 5), 1f);
+        steps.setPadding(Ui.dp(this, 16), Ui.dp(this, 8),
+                Ui.dp(this, 16), Ui.dp(this, 8));
+        steps.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 12),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        panel.addView(steps, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 116)));
+
+        TextView reassurance = Ui.text(this,
+                "After activation, previews and wallpaper changes stay inside Deckscape.",
+                13, Ui.CYAN);
+        reassurance.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(reassurance, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button later = Ui.button(this, "Not now", false);
+        Button activate = Ui.button(this, "Activate Deckscape", true);
+        actions.addView(later, new LinearLayout.LayoutParams(
+                Ui.dp(this, 110), Ui.dp(this, 46)));
+        LinearLayout.LayoutParams activateParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 166), Ui.dp(this, 46));
+        activateParams.leftMargin = Ui.dp(this, 10);
+        actions.addView(activate, activateParams);
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        later.setOnClickListener(view -> dialog.dismiss());
+        activate.setOnClickListener(view -> {
+            dialog.dismiss();
+            activateWallpaper();
+        });
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 18),
+                    Ui.DIVIDER, Ui.dp(this, 1)));
+            int available = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 48);
+            window.setLayout(Math.min(available, Ui.dp(this, 700)),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    /** Shows every downloaded wallpaper that participates in automatic or manual rotation. */
+    private void showSlideshowLibrary() {
+        List<File> files = WallpaperStore.list(this);
+        File current = WallpaperStore.current(this, files);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 18),
+                Ui.dp(this, 22), Ui.dp(this, 12));
+
+        panel.addView(Ui.title(this, "Slideshow wallpapers", 22),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 42)));
+
+        String summary = files.isEmpty()
+                ? "Download wallpapers to include them in the slideshow."
+                : "All " + files.size() + " downloaded wallpapers are included automatically. "
+                        + "Show now changes the current image without removing the others.";
+        TextView explanation = Ui.text(this, summary, 13, Ui.MUTED);
+        explanation.setMaxLines(2);
+        panel.addView(explanation, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        FrameLayout content = new FrameLayout(this);
+        GridView slideshow = new GridView(this);
+        slideshow.setNumColumns(3);
+        slideshow.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        slideshow.setHorizontalSpacing(Ui.dp(this, 8));
+        slideshow.setVerticalSpacing(Ui.dp(this, 8));
+        slideshow.setPadding(0, Ui.dp(this, 4), 0, Ui.dp(this, 8));
+        slideshow.setClipToPadding(false);
+        slideshow.setSelector(android.R.color.transparent);
+        content.addView(slideshow, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView empty = Ui.title(this, "NO WALLPAPERS DOWNLOADED", 13);
+        empty.setTextColor(Ui.MUTED);
+        empty.setGravity(Gravity.CENTER);
+        content.addView(empty, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        slideshow.setEmptyView(empty);
+
+        SlideshowGridAdapter adapter = new SlideshowGridAdapter(
+                this, previewCache, files, current, file -> {
+                    WallpaperStore.select(this, file);
+                    sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                            .setPackage(getPackageName()));
+                    gridAdapter.refreshLibraryState(isWallpaperActive());
+                    setStatus("Now showing " + WallpaperStore.displayName(file)
+                            + ". Other downloaded wallpapers remain in the slideshow.");
+                    Toast.makeText(this, "Wallpaper changed • slideshow unchanged",
+                            Toast.LENGTH_SHORT).show();
+                });
+        slideshow.setAdapter(adapter);
+        panel.addView(content, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 360)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button close = Ui.button(this, "Close", false);
+        actions.addView(close, new LinearLayout.LayoutParams(
+                Ui.dp(this, 104), Ui.dp(this, 46)));
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        close.setOnClickListener(view -> dialog.dismiss());
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 18),
+                    Ui.DIVIDER, Ui.dp(this, 1)));
+            int available = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 48);
+            window.setLayout(Math.min(available, Ui.dp(this, 900)),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    /** Opens a cached, bandwidth-saving preview without downloading or selecting the original. */
+    private void showWallpaperPreview(CatalogItem item) {
+        RepositorySource source = activeSource;
+        if (source == null) return;
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 18),
+                Ui.dp(this, 22), Ui.dp(this, 12));
+
+        TextView title = Ui.title(this, item.name, 20);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        panel.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 38)));
+
+        String note = item.isGif()
+                ? "Animated preview • original GIF is cached temporarily for playback"
+                : "Optimised 16:9 preview • original downloads only when you choose Download";
+        TextView description = Ui.text(this, note, 12, Ui.MUTED);
+        panel.addView(description, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
+
+        FrameLayout previewFrame = new FrameLayout(this);
+        previewFrame.setBackground(Ui.rounded(Ui.BACKGROUND, Ui.dp(this, 12),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        previewFrame.setClipToOutline(true);
+
+        ImageView image = null;
+        AnimatedGifView animation = null;
+        if (item.isGif()) {
+            animation = new AnimatedGifView(this);
+            animation.setContentDescription("Animated preview of " + item.name);
+            previewFrame.addView(animation, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        } else {
+            image = new ImageView(this);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            image.setContentDescription("Preview of " + item.name);
+            previewFrame.addView(image, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+
+        TextView loading = Ui.title(this, "LOADING PREVIEW", 12);
+        loading.setTextColor(Ui.MUTED);
+        loading.setGravity(Gravity.CENTER);
+        previewFrame.addView(loading, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout.LayoutParams frameParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 420));
+        frameParams.topMargin = Ui.dp(this, 8);
+        panel.addView(previewFrame, frameParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button close = Ui.button(this, "Close", false);
+        actions.addView(close, new LinearLayout.LayoutParams(
+                Ui.dp(this, 104), Ui.dp(this, 46)));
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        close.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnShowListener(ignored -> {
+            styleDialog(dialog);
+            Window window = dialog.getWindow();
+            if (window != null) {
+                int available = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 48);
+                window.setLayout(Math.min(available, Ui.dp(this, 900)),
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+            }
+        });
+        dialog.show();
+
+        if (item.isGif()) {
+            AnimatedGifView target = animation;
+            previewCache.requestGif(source, item, (movie, error) -> {
+                if (!dialog.isShowing()) return;
+                if (movie != null) {
+                    target.setMovie(movie);
+                    loading.setVisibility(View.GONE);
+                } else {
+                    loading.setText(error == null ? "GIF PREVIEW UNAVAILABLE" : error);
+                }
+            });
+        } else {
+            ImageView target = image;
+            previewCache.request(source, item, (bitmap, error) -> {
+                if (!dialog.isShowing()) return;
+                if (bitmap != null) {
+                    target.setImageBitmap(bitmap);
+                    loading.setVisibility(View.GONE);
+                } else {
+                    loading.setText(error == null ? "PREVIEW UNAVAILABLE" : error);
+                }
+            });
+        }
     }
 
     private void activateWallpaper() {
@@ -737,42 +1043,282 @@ public final class MainActivity extends Activity {
     private void showInfo() {
         double previewMb = previewCache.diskBytes() / (1024.0 * 1024.0);
         double libraryMb = WallpaperStore.totalBytes(this) / (1024.0 * 1024.0);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 24), Ui.dp(this, 20),
+                Ui.dp(this, 24), Ui.dp(this, 14));
+        panel.addView(Ui.title(this, "About " + AppMetadata.DISPLAY_NAME, 22),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 42)));
+
         String message = String.format(Locale.ROOT,
                 AppMetadata.versionLabel() + "\n\n"
-                        + "• Public GitHub repositories only\n"
-                        + "• Folder categories use a representative wallpaper cover\n"
-                        + "• Download and active states stay visible on each card\n"
-                        + "• 480×270 previews are cached locally\n"
-                        + "• GIF animation pauses behind other apps\n\n"
+                        + "• Every download joins the slideshow automatically\n"
+                        + "• Static and animated previews remain in a bounded local cache\n"
+                        + "• No account, analytics, advertising, location or storage permission\n\n"
                         + "Preview cache: %.1f MB / 96 MB\n"
                         + "Downloaded library: %.1f MB\n\n"
-                        + "Data saver requests reduced previews from wsrv.nl and falls back to the "
-                        + "original GitHub image when needed. Turn it off to use GitHub directly. "
-                        + "Artwork remains subject to each source and creator's terms.",
+                        + "Deckscape checks its official GitHub releases once per day. New APKs "
+                        + "download automatically over any internet connection, including mobile "
+                        + "data, then wait for you to approve installation.",
                 previewMb, libraryMb);
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("About " + AppMetadata.DISPLAY_NAME)
-                .setMessage(message)
-                .setNegativeButton("Clear previews", (ignoredDialog, which) -> {
-                    previewCache.clear();
-                    gridAdapter.notifyDataSetChanged();
-                    setStatus("Preview cache cleared.");
-                })
-                .setNeutralButton(previewCache.isDataSaverEnabled()
-                        ? "Data saver: on" : "Data saver: off", null)
-                .setPositiveButton("Done", null)
-                .create();
-        dialog.setOnShowListener(ignored -> {
-            styleDialog(dialog);
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view -> {
-                    boolean enabled = !previewCache.isDataSaverEnabled();
-                    previewCache.setDataSaverEnabled(enabled);
-                    dialog.dismiss();
-                    setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
-                    showInfo();
-                });
+        TextView copy = Ui.text(this, message, 13, Ui.MUTED);
+        copy.setLineSpacing(Ui.dp(this, 3), 1f);
+        panel.addView(copy, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 268)));
+
+        infoUpdateStatus = Ui.text(this, updateSummary(), 13,
+                updateState != null && updateState.phase == UpdateManager.Phase.READY
+                        ? Ui.CYAN : Ui.MUTED);
+        infoUpdateStatus.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), 0);
+        infoUpdateStatus.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        panel.addView(infoUpdateStatus, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button clear = Ui.actionButton(this, "Clear previews", false);
+        Button saver = Ui.actionButton(this, previewCache.isDataSaverEnabled()
+                ? "Data saver: on" : "Data saver: off", false);
+        Button check = Ui.actionButton(this, updateState != null && updateState.release != null
+                ? "View update" : "Check updates", true);
+        Button done = Ui.button(this, "Done", true);
+        addEqualDialogAction(actions, clear, false);
+        addEqualDialogAction(actions, saver, true);
+        addEqualDialogAction(actions, check, true);
+        addEqualDialogAction(actions, done, true);
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        infoDialog = dialog;
+        clear.setOnClickListener(view -> {
+            previewCache.clear();
+            gridAdapter.notifyDataSetChanged();
+            setStatus("Preview cache cleared.");
+            dialog.dismiss();
+        });
+        saver.setOnClickListener(view -> {
+            boolean enabled = !previewCache.isDataSaverEnabled();
+            previewCache.setDataSaverEnabled(enabled);
+            saver.setText(enabled ? "Data saver: on" : "Data saver: off");
+            setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
+        });
+        check.setOnClickListener(view -> {
+            if (updateState != null && updateState.release != null) {
+                dialog.dismiss();
+                showUpdateDialog();
+            } else {
+                updateManager.checkNow();
+            }
+        });
+        done.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnDismissListener(ignored -> {
+            if (infoDialog == dialog) infoDialog = null;
+            infoUpdateStatus = null;
         });
         dialog.show();
+        styleWideDialog(dialog, 900);
+    }
+
+    private void addEqualDialogAction(LinearLayout row, Button button, boolean margin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, Ui.dp(this, 46), 1f);
+        if (margin) params.leftMargin = Ui.dp(this, 8);
+        row.addView(button, params);
+    }
+
+    private String updateSummary() {
+        if (updateState == null) return "UPDATES  •  Starting update check…";
+        return "UPDATES  •  " + updateState.message;
+    }
+
+    /** Reflects background update progress without interrupting wallpaper browsing. */
+    private void onUpdateStateChanged(UpdateManager.State value) {
+        updateState = value;
+        if (infoButton == null || isFinishing()) return;
+        if (value.phase == UpdateManager.Phase.READY) {
+            infoButton.setText(R.string.update_available);
+            infoButton.setTextSize(13);
+            infoButton.setTextColor(Ui.NAV);
+            infoButton.setBackground(Ui.rounded(Ui.CYAN, Ui.dp(this, 12),
+                    Ui.CYAN, Ui.dp(this, 1)));
+            setStatus("Deckscape " + value.release.versionName + " is ready to install.");
+        } else if (value.phase == UpdateManager.Phase.DOWNLOADING) {
+            infoButton.setText(getString(R.string.update_progress, value.progress));
+            infoButton.setTextSize(12);
+            infoButton.setTextColor(Ui.CYAN);
+            infoButton.setBackground(Ui.rounded(Ui.CYAN_DARK, Ui.dp(this, 12),
+                    Ui.CYAN, Ui.dp(this, 1)));
+        } else {
+            infoButton.setText(R.string.info);
+            infoButton.setTextSize(14);
+            infoButton.setTextColor(Ui.TEXT);
+            infoButton.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 12),
+                    Ui.DIVIDER, Ui.dp(this, 1)));
+        }
+        if (infoUpdateStatus != null) {
+            infoUpdateStatus.setText(updateSummary());
+            infoUpdateStatus.setTextColor(value.phase == UpdateManager.Phase.READY
+                    ? Ui.CYAN : value.phase == UpdateManager.Phase.ERROR ? Ui.CORAL : Ui.MUTED);
+        }
+        refreshUpdateDialog();
+    }
+
+    /** Shows release notes, download progress, verification state, and install consent. */
+    private void showUpdateDialog() {
+        UpdateManager.State current = updateState;
+        if (current == null || current.release == null) {
+            showInfo();
+            return;
+        }
+        UpdateRelease release = current.release;
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 24), Ui.dp(this, 20),
+                Ui.dp(this, 24), Ui.dp(this, 14));
+        panel.addView(Ui.title(this, "Deckscape " + release.versionName, 22),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 42)));
+
+        String notes = release.notes.isEmpty()
+                ? "This release does not include additional notes." : release.notes;
+        TextView notesView = Ui.text(this, notes, 13, Ui.MUTED);
+        notesView.setPadding(Ui.dp(this, 14), Ui.dp(this, 10),
+                Ui.dp(this, 14), Ui.dp(this, 10));
+        ScrollView notesScroll = new ScrollView(this);
+        notesScroll.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        notesScroll.addView(notesView, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(notesScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 210)));
+
+        updateDialogStatus = Ui.text(this, current.message, 14, Ui.CYAN);
+        panel.addView(updateDialogStatus, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+        updateDialogProgress = new ProgressBar(this, null,
+                android.R.attr.progressBarStyleHorizontal);
+        updateDialogProgress.setMax(100);
+        updateDialogProgress.setProgress(current.progress);
+        updateDialogProgress.setProgressTintList(
+                android.content.res.ColorStateList.valueOf(Ui.CYAN));
+        updateDialogProgress.setProgressBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(Ui.CYAN_DARK));
+        panel.addView(updateDialogProgress, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 6)));
+
+        TextView warning = Ui.text(this,
+                "Android will ask you to approve installation. Updating may temporarily restore "
+                        + "a head unit's stock wallpaper; reopen Deckscape and tap Set up if needed.",
+                13, Ui.CORAL);
+        warning.setPadding(Ui.dp(this, 14), Ui.dp(this, 8),
+                Ui.dp(this, 14), Ui.dp(this, 8));
+        panel.addView(warning, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button releasePage = Ui.actionButton(this, "Release page", false);
+        Button later = Ui.actionButton(this, "Later", false);
+        updateDialogAction = Ui.button(this, "Install update", true);
+        addEqualDialogAction(actions, releasePage, false);
+        addEqualDialogAction(actions, later, true);
+        addEqualDialogAction(actions, updateDialogAction, true);
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        updateDialog = dialog;
+        releasePage.setOnClickListener(view -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl)));
+            } catch (Exception exception) {
+                Toast.makeText(this, "No browser is available.", Toast.LENGTH_LONG).show();
+            }
+        });
+        later.setOnClickListener(view -> dialog.dismiss());
+        updateDialogAction.setOnClickListener(view -> {
+            UpdateManager.State latest = updateState;
+            if (latest != null && latest.canInstall()) {
+                beginUpdateInstall();
+            } else if (latest != null && latest.phase == UpdateManager.Phase.ERROR) {
+                updateManager.checkNow();
+            }
+        });
+        dialog.setOnDismissListener(ignored -> {
+            if (updateDialog == dialog) updateDialog = null;
+            updateDialogStatus = null;
+            updateDialogProgress = null;
+            updateDialogAction = null;
+        });
+        dialog.show();
+        styleWideDialog(dialog, 820);
+        refreshUpdateDialog();
+    }
+
+    private void refreshUpdateDialog() {
+        if (updateDialog == null || !updateDialog.isShowing() || updateState == null) return;
+        if (updateDialogStatus != null) {
+            updateDialogStatus.setText(updateState.message);
+            updateDialogStatus.setTextColor(updateState.phase == UpdateManager.Phase.ERROR
+                    ? Ui.CORAL : Ui.CYAN);
+        }
+        if (updateDialogProgress != null) {
+            updateDialogProgress.setProgress(updateState.progress);
+            updateDialogProgress.setVisibility(updateState.phase == UpdateManager.Phase.DOWNLOADING
+                    ? View.VISIBLE : View.INVISIBLE);
+        }
+        if (updateDialogAction == null) return;
+        if (updateState.canInstall()) {
+            updateDialogAction.setText(R.string.install_update);
+            updateDialogAction.setEnabled(true);
+        } else if (updateState.phase == UpdateManager.Phase.ERROR) {
+            updateDialogAction.setText(R.string.retry_update);
+            updateDialogAction.setEnabled(true);
+        } else {
+            updateDialogAction.setText(updateState.phase == UpdateManager.Phase.CHECKING
+                    ? R.string.checking_update : R.string.downloading_update);
+            updateDialogAction.setEnabled(false);
+        }
+    }
+
+    private void beginUpdateInstall() {
+        if (updateState == null || !updateState.canInstall()) return;
+        if (!UpdateInstaller.hasInstallPermission(this)) {
+            pendingUpdateInstall = true;
+            try {
+                UpdateInstaller.requestInstallPermission(this);
+            } catch (Exception exception) {
+                pendingUpdateInstall = false;
+                Toast.makeText(this, "Android's install-source settings are unavailable.",
+                        Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        launchVerifiedUpdate();
+    }
+
+    private void launchVerifiedUpdate() {
+        if (updateState == null || !updateState.canInstall()) return;
+        try {
+            if (updateDialog != null) updateDialog.dismiss();
+            UpdateInstaller.install(this, updateState.file);
+        } catch (Exception exception) {
+            Toast.makeText(this, "Android's package installer is unavailable.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void styleWideDialog(AlertDialog dialog, int widthDp) {
+        styleDialog(dialog);
+        Window window = dialog.getWindow();
+        if (window != null) {
+            int available = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 48);
+            window.setLayout(Math.min(available, Ui.dp(this, widthDp)),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private void styleDialog(AlertDialog dialog) {

@@ -10,7 +10,7 @@ GitHub Contents / Git Trees API
               │
       ┌───────┴────────┐
       ▼                ▼
-visible card  user presses Download/Use
+visible card  user presses Download/Show now
       │                │
       ▼                ▼
 wsrv.nl thumbnail bounded raw download
@@ -53,6 +53,8 @@ renamed into the private library.
   8 MB pruning threshold.
 - Preview JPEGs: 480×270, memory LRU plus 96 MB disk ceiling, pruned to 72 MB;
   wsrv.nl by default with direct GitHub fallback.
+- Animated preview GIFs: fetched only when Preview is opened, capped at 12 MB,
+  decoded before display, and covered by the shared preview-cache ceiling.
 - Wallpaper library: app files directory, retained until app removal or future
   library-management action.
 
@@ -64,5 +66,31 @@ are sampled down above 4,096 pixels per axis for runtime memory safety. GIFs
 use Android's platform `Movie` decoder at a 100 ms redraw cadence and stop
 scheduling frames immediately when the wallpaper becomes hidden.
 
+The app-private wallpaper library is also the slideshow membership list. Every
+validated download joins the rotation automatically; selecting **Show now**
+only updates the stable current filename. The Slideshow panel reads this same
+library and generates bounded local previews through the shared preview cache.
+
 Android owns activation. Deckscape opens
 `ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.
+
+## Application updates
+
+`UpdateManager` performs a daily foreground check against the fixed latest
+release endpoint for `MetalHepple/Deckscape`. It accepts stable semantic
+versions only and delegates transport to `UpdateClient`, which follows at most
+five redirects through an explicit GitHub release-host allowlist. JSON,
+checksum, and APK responses are streamed through independent byte limits.
+
+A newer APK is downloaded automatically on any available network, including a
+metered mobile connection, to an app-private `.part` file. The client verifies
+its declared length and SHA-256 before an atomic rename. `UpdateVerifier` then
+parses the archive and requires the Deckscape package name, exact advertised
+version, a higher version code, and the same signer set as the installed app.
+Non-debug builds additionally require the pinned production signer.
+
+Only the fully verified cached APK can be exposed through
+`UpdateFileProvider`. That provider is non-exported and maps one exact read-only
+content URI. Installation remains an explicit user action handled by Android's
+package installer; Deckscape neither requests privileged installation access
+nor attempts a silent update.
