@@ -3,6 +3,51 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [1.6.0] - 2026-08-10
+
+### Added
+
+- Per-wallpaper **Options** with **Fill**, **Fit**, **Stretch**, and a touch-
+  controlled **Custom crop** that saves zoom and focal position.
+- A global display default, used by wallpapers that remain set to **Use
+  default**.
+- Optional Day & Night wallpaper pools. Each downloaded wallpaper can be used
+  for both periods or assigned specifically to Day or Night.
+- Automatic changeover using an ambient-light sensor when available, otherwise
+  on-device sunrise/sunset calculations from a one-time approximate location.
+- Configurable manual day and night times for devices without a sensor or when
+  location access is declined.
+- A landscape-first **Settings** panel for scheduling, fit, slideshow interval,
+  Data Saver, preview-cache cleanup, and storage totals.
+- An expanded **About** panel with the current version and update state,
+  dynamically cached GitHub contributors, project/source licences, repository
+  access, and an optional Ko-fi support link.
+
+### Changed
+
+- Installed wallpaper cards and the Library use a consistent **Options** action;
+  **Show now**, slideshow membership, and confirmed device deletion remain
+  available inside the options panel.
+- The live engine now renders against the actual canvas dimensions and applies
+  the same display transform to still images and animated GIFs.
+- Day/night changes take effect immediately, while a manual **Show now** choice
+  remains in place until the next normal slideshow interval.
+- The app requests approximate location only from the visible Settings flow,
+  rounds it to 0.1 degrees, stores it locally, and performs solar calculations
+  entirely on the device.
+
+### Security and reliability
+
+- Display transforms are bounded, deterministic, and shared between preview
+  and live rendering to prevent a crop preview from differing from the result.
+- Day & Night cannot be enabled until both periods have at least one eligible
+  wallpaper, and it switches itself off safely if a later library edit empties
+  either pool.
+- GitHub contributor and licence metadata uses bounded HTTPS responses, a
+  host allowlist, expiring private caches, and stale offline fallback.
+- The local test suite now contains 53 tests, alongside strict Android lint and
+  minified release-build verification.
+
 ## [1.5.0] - 2026-08-10
 
 ### Added
@@ -118,6 +163,7 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
+[1.6.0]: https://github.com/MetalHepple/Deckscape/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/MetalHepple/Deckscape/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/MetalHepple/Deckscape/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/MetalHepple/Deckscape/releases/tag/v1.3.0

@@ -9,7 +9,7 @@ chooses to preview or apply it.
 [images.weserv.nl](https://github.com/weserv/images) powers the optional
 bandwidth-saving previews at `wsrv.nl`. Its source is available under the
 BSD 3-Clause licence. The hosted service is used as-is and is not operated by
-the Deckscape project. Users can disable it from **Info → Data saver**.
+the Deckscape project. Users can disable it from **Settings → Data & storage**.
 
 ## Default catalogs
 

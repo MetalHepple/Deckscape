@@ -1,5 +1,6 @@
 package uk.darkbyte.deckscape;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.WallpaperInfo;
@@ -7,8 +8,12 @@ import android.app.WallpaperManager;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
@@ -41,6 +46,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -50,6 +56,7 @@ import java.util.concurrent.Executors;
  * thread and are guarded by request generations when navigation supersedes an older request.
  */
 public final class MainActivity extends Activity {
+    private static final int REQUEST_COARSE_LOCATION = 41;
     private static final String UI_PREFS = "ui_state";
     private static final String KEY_LAST_SOURCE = "last_source";
     private static final String[] INTERVAL_LABELS = {
@@ -67,6 +74,10 @@ public final class MainActivity extends Activity {
     private GitHubCatalogClient catalogClient;
     private PreviewCache previewCache;
     private UpdateManager updateManager;
+    private GitHubMetadataClient metadataClient;
+    private RepositoryMetadata aboutMetadata;
+    private DayNightSettings dayNightSettings;
+    private CoarseLocationClient locationClient;
     private UpdateManager.State updateState;
     private SourceListAdapter sourceAdapter;
     private WallpaperGridAdapter gridAdapter;
@@ -89,6 +100,12 @@ public final class MainActivity extends Activity {
     private Button modeButton;
     private Button openSourceButton;
     private Button infoButton;
+    private Button settingsButton;
+    private AlertDialog settingsDialog;
+    private Button settingsDayNightToggle;
+    private TextView settingsDayNightStatus;
+    private Button settingsLocationButton;
+    private boolean pendingEnableDayNight;
     private AlertDialog infoDialog;
     private AlertDialog updateDialog;
     private TextView infoUpdateStatus;
@@ -103,7 +120,10 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Ui.NAV);
         sourceStore = new SourceStore(this);
         catalogClient = new GitHubCatalogClient(this);
+        metadataClient = new GitHubMetadataClient(this);
         previewCache = new PreviewCache(this);
+        dayNightSettings = new DayNightSettings(this);
+        locationClient = new CoarseLocationClient(this);
         setContentView(buildUi());
         updateManager = new UpdateManager(this, this::onUpdateStateChanged);
         updateState = updateManager.state();
@@ -134,10 +154,31 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_COARSE_LOCATION) return;
+        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            resolveCoarseLocation();
+        } else {
+            boolean shouldEnable = pendingEnableDayNight;
+            pendingEnableDayNight = false;
+            dayNightSettings.setMode(ScheduleMode.MANUAL);
+            if (shouldEnable) dayNightSettings.setEnabled(true);
+            broadcastConfigurationChanged();
+            refreshSettingsStatus();
+            Toast.makeText(this,
+                    "Approximate location was not enabled. Deckscape is using manual times.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         requestGeneration++;
         io.shutdownNow();
         previewCache.close();
+        locationClient.cancel();
         if (updateManager != null) updateManager.close();
         super.onDestroy();
     }
@@ -238,7 +279,15 @@ public final class MainActivity extends Activity {
         activateParams.leftMargin = Ui.dp(this, 8);
         top.addView(modeButton, activateParams);
 
-        infoButton = Ui.button(this, "Info", false);
+        settingsButton = Ui.button(this, "Settings", false);
+        settingsButton.setSingleLine(true);
+        settingsButton.setOnClickListener(view -> showSettings());
+        LinearLayout.LayoutParams settingsParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 98), Ui.dp(this, 48));
+        settingsParams.leftMargin = Ui.dp(this, 8);
+        top.addView(settingsButton, settingsParams);
+
+        infoButton = Ui.button(this, "About", false);
         infoButton.setSingleLine(true);
         infoButton.setOnClickListener(view -> {
             if (updateState != null && updateState.release != null
@@ -251,7 +300,7 @@ public final class MainActivity extends Activity {
             }
         });
         LinearLayout.LayoutParams infoParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 82), Ui.dp(this, 48));
+                Ui.dp(this, 88), Ui.dp(this, 48));
         infoParams.leftMargin = Ui.dp(this, 8);
         top.addView(infoButton, infoParams);
         return top;
@@ -398,6 +447,13 @@ public final class MainActivity extends Activity {
                     @Override
                     public void onPreview(CatalogItem item) {
                         showWallpaperPreview(item);
+                    }
+
+                    @Override
+                    public void onOptions(CatalogItem item) {
+                        File file = WallpaperStore.installedFile(
+                                MainActivity.this, activeSource, item);
+                        if (file != null) showWallpaperOptions(file, null);
                     }
                 });
         grid.setAdapter(gridAdapter);
@@ -791,6 +847,7 @@ public final class MainActivity extends Activity {
                 try {
                     if (included) WallpaperStore.include(MainActivity.this, file);
                     else WallpaperStore.removeFromSlideshow(MainActivity.this, file);
+                    boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
                     refreshWallpaperLibrary(adapterHolder[0], explanation);
                     String name = WallpaperStore.displayName(file);
                     int count = adapterHolder[0].includedCount();
@@ -809,25 +866,16 @@ public final class MainActivity extends Activity {
                         Toast.makeText(MainActivity.this, "Removed from slideshow • file kept",
                                 Toast.LENGTH_SHORT).show();
                     }
+                    if (scheduleDisabled) showScheduleDisabledMessage();
                 } catch (Exception exception) {
                     showWallpaperLibraryError(exception);
                 }
             }
 
             @Override
-            public void onDelete(File file) {
-                confirmWallpaperDeletion(file, () -> {
-                    try {
-                        String name = WallpaperStore.displayName(file);
-                        WallpaperStore.delete(MainActivity.this, file);
-                        refreshWallpaperLibrary(adapterHolder[0], explanation);
-                        setStatus("Deleted " + name + " from this device.");
-                        Toast.makeText(MainActivity.this, "Deleted from device",
-                                Toast.LENGTH_SHORT).show();
-                    } catch (Exception exception) {
-                        showWallpaperLibraryError(exception);
-                    }
-                });
+            public void onOptions(File file) {
+                showWallpaperOptions(file,
+                        () -> refreshWallpaperLibrary(adapterHolder[0], explanation));
             }
         });
         adapterHolder[0] = adapter;
@@ -894,6 +942,82 @@ public final class MainActivity extends Activity {
         String message = readableMessage(exception);
         setStatus("Could not update wallpaper library: " + message);
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    /** Opens one wallpaper's crop, schedule, membership, selection, and deletion controls. */
+    private void showWallpaperOptions(File file, Runnable refreshLibraryDialog) {
+        WallpaperOptionsDialog.show(this, io, file, new WallpaperOptionsDialog.Listener() {
+            @Override
+            public void onProfileSaved(File changed) {
+                boolean disabled = new DayNightSettings(MainActivity.this)
+                        .disableIfIncomplete();
+                notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+                setStatus("Saved options for " + WallpaperStore.displayName(changed) + ".");
+                if (disabled) showScheduleDisabledMessage();
+            }
+
+            @Override
+            public void onShowNow(File selected) {
+                try {
+                    WallpaperStore.include(MainActivity.this, selected);
+                    WallpaperStore.select(MainActivity.this, selected);
+                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+                    setStatus("Now showing " + WallpaperStore.displayName(selected)
+                            + ". The slideshow remains enabled.");
+                    Toast.makeText(MainActivity.this, "Now showing • slideshow unchanged",
+                            Toast.LENGTH_SHORT).show();
+                } catch (Exception exception) {
+                    showWallpaperLibraryError(exception);
+                }
+            }
+
+            @Override
+            public void onSetIncluded(File changed, boolean included) {
+                try {
+                    if (included) WallpaperStore.include(MainActivity.this, changed);
+                    else WallpaperStore.removeFromSlideshow(MainActivity.this, changed);
+                    boolean disabled = new DayNightSettings(MainActivity.this)
+                            .disableIfIncomplete();
+                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+                    setStatus((included ? "Added " : "Removed ")
+                            + WallpaperStore.displayName(changed)
+                            + (included ? " to the slideshow." : " from the slideshow."));
+                    if (disabled) showScheduleDisabledMessage();
+                } catch (Exception exception) {
+                    showWallpaperLibraryError(exception);
+                }
+            }
+
+            @Override
+            public void onDelete(File deleted) {
+                try {
+                    String name = WallpaperStore.displayName(deleted);
+                    WallpaperStore.delete(MainActivity.this, deleted);
+                    boolean disabled = new DayNightSettings(MainActivity.this)
+                            .disableIfIncomplete();
+                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+                    setStatus("Deleted " + name + " from this device.");
+                    Toast.makeText(MainActivity.this, "Deleted from device",
+                            Toast.LENGTH_SHORT).show();
+                    if (disabled) showScheduleDisabledMessage();
+                } catch (Exception exception) {
+                    showWallpaperLibraryError(exception);
+                }
+            }
+        });
+    }
+
+    private void notifyWallpaperConfigurationChanged(Runnable refreshLibraryDialog) {
+        sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                .setPackage(getPackageName()));
+        if (refreshLibraryDialog != null) refreshLibraryDialog.run();
+        gridAdapter.refreshLibraryState(isWallpaperActive());
+    }
+
+    private void showScheduleDisabledMessage() {
+        Toast.makeText(this,
+                "Day & Night was disabled because one period has no slideshow wallpapers.",
+                Toast.LENGTH_LONG).show();
     }
 
     /** Opens a cached, bandwidth-saving preview without downloading or selecting the original. */
@@ -1140,9 +1264,374 @@ public final class MainActivity extends Activity {
         styleDialog(dialog);
     }
 
+    /** Shows global day/night, display, rotation, and cache settings. */
+    private void showSettings() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 16),
+                Ui.dp(this, 22), Ui.dp(this, 12));
+        panel.addView(Ui.title(this, "Settings", 22), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 42)));
+
+        LinearLayout columns = new LinearLayout(this);
+        columns.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(columns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 405)));
+
+        LinearLayout schedule = settingsColumn();
+        columns.addView(schedule, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        schedule.addView(settingsHeading("DAY & NIGHT"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
+        settingsDayNightStatus = Ui.text(this, "", 13, Ui.MUTED);
+        settingsDayNightStatus.setGravity(Gravity.TOP);
+        settingsDayNightStatus.setLineSpacing(Ui.dp(this, 2), 1f);
+        schedule.addView(settingsDayNightStatus, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 78)));
+
+        settingsDayNightToggle = Ui.button(this, "", true);
+        settingsDayNightToggle.setOnClickListener(view -> {
+            if (dayNightSettings.isEnabled()) {
+                dayNightSettings.setEnabled(false);
+                pendingEnableDayNight = false;
+                broadcastConfigurationChanged();
+                refreshSettingsStatus();
+                return;
+            }
+            enableDayNightFromSettings();
+        });
+        schedule.addView(settingsDayNightToggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        schedule.addView(settingsLabel("SCHEDULE METHOD"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
+        Spinner mode = settingsSpinner(scheduleModeLabels());
+        mode.setSelection(dayNightSettings.mode().ordinal());
+        schedule.addView(mode, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        LinearLayout times = new LinearLayout(this);
+        times.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout dayTime = timeControl("DAY BEGINS", dayNightSettings.dayMinute());
+        LinearLayout nightTime = timeControl("NIGHT BEGINS", dayNightSettings.nightMinute());
+        times.addView(dayTime, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        LinearLayout.LayoutParams nightParams = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        nightParams.leftMargin = Ui.dp(this, 8);
+        times.addView(nightTime, nightParams);
+        schedule.addView(times, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 82)));
+
+        settingsLocationButton = Ui.actionButton(this, "Refresh automatic location", false);
+        settingsLocationButton.setSingleLine(true);
+        settingsLocationButton.setOnClickListener(view -> requestAutomaticLocation(false));
+        schedule.addView(settingsLocationButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        LinearLayout right = settingsColumn();
+        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        rightParams.leftMargin = Ui.dp(this, 22);
+        columns.addView(right, rightParams);
+        right.addView(settingsHeading("DISPLAY"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
+        right.addView(settingsLabel("DEFAULT WALLPAPER FIT"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+        ScaleMode[] defaults = {ScaleMode.FILL, ScaleMode.FIT, ScaleMode.STRETCH};
+        Spinner defaultScale = settingsSpinner(new String[]{
+                defaults[0].label, defaults[1].label, defaults[2].label});
+        int selectedScale = dayNightSettings.defaultScaleMode() == ScaleMode.FIT ? 1
+                : dayNightSettings.defaultScaleMode() == ScaleMode.STRETCH ? 2 : 0;
+        defaultScale.setSelection(selectedScale);
+        right.addView(defaultScale, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        right.addView(settingsLabel("SLIDESHOW INTERVAL"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 34)));
+        Spinner interval = settingsSpinner(INTERVAL_LABELS);
+        configureInterval(interval);
+        right.addView(interval, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        right.addView(settingsHeading("DATA & STORAGE"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 42)));
+        TextView storage = Ui.text(this, storageSummary(), 13, Ui.MUTED);
+        storage.setLineSpacing(Ui.dp(this, 2), 1f);
+        right.addView(storage, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 60)));
+
+        LinearLayout storageActions = new LinearLayout(this);
+        Button dataSaver = Ui.actionButton(this, previewCache.isDataSaverEnabled()
+                ? "Data saver: on" : "Data saver: off", false);
+        Button clear = Ui.actionButton(this, "Clear previews", false);
+        storageActions.addView(dataSaver, new LinearLayout.LayoutParams(
+                0, Ui.dp(this, 48), 1f));
+        LinearLayout.LayoutParams clearParams = new LinearLayout.LayoutParams(
+                0, Ui.dp(this, 48), 1f);
+        clearParams.leftMargin = Ui.dp(this, 8);
+        storageActions.addView(clear, clearParams);
+        right.addView(storageActions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button done = Ui.button(this, "Done", true);
+        actions.addView(done, new LinearLayout.LayoutParams(
+                Ui.dp(this, 118), Ui.dp(this, 46)));
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        settingsDialog = dialog;
+        boolean[] initializing = {true};
+        mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                ScheduleMode selected = ScheduleMode.values()[position];
+                dayNightSettings.setMode(selected);
+                if (!initializing[0] && selected == ScheduleMode.AUTO
+                        && dayNightSettings.isEnabled() && !hasAmbientLightSensor()
+                        && !dayNightSettings.hasCoarseLocation()) {
+                    requestAutomaticLocation(false);
+                }
+                broadcastConfigurationChanged();
+                refreshSettingsStatus();
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        defaultScale.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                dayNightSettings.setDefaultScaleMode(defaults[position]);
+                if (!initializing[0]) broadcastConfigurationChanged();
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        dataSaver.setOnClickListener(view -> {
+            boolean enabled = !previewCache.isDataSaverEnabled();
+            previewCache.setDataSaverEnabled(enabled);
+            dataSaver.setText(enabled ? "Data saver: on" : "Data saver: off");
+            setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
+        });
+        clear.setOnClickListener(view -> {
+            previewCache.clear();
+            catalogClient.clearCache();
+            gridAdapter.notifyDataSetChanged();
+            storage.setText(storageSummary());
+            setStatus("Preview and catalog caches cleared.");
+        });
+        done.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnDismissListener(ignored -> {
+            if (settingsDialog == dialog) settingsDialog = null;
+            settingsDayNightToggle = null;
+            settingsDayNightStatus = null;
+            settingsLocationButton = null;
+        });
+        dialog.show();
+        styleWideDialog(dialog, 1_050);
+        initializing[0] = false;
+        refreshSettingsStatus();
+    }
+
+    private LinearLayout settingsColumn() {
+        LinearLayout column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setPadding(Ui.dp(this, 14), Ui.dp(this, 10),
+                Ui.dp(this, 14), Ui.dp(this, 10));
+        column.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 12),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        return column;
+    }
+
+    private TextView settingsHeading(String text) {
+        TextView view = Ui.title(this, text, 12);
+        view.setTextColor(Ui.CYAN);
+        return view;
+    }
+
+    private TextView settingsLabel(String text) {
+        TextView view = Ui.title(this, text, 10);
+        view.setTextColor(Ui.MUTED);
+        return view;
+    }
+
+    private Spinner settingsSpinner(String[] labels) {
+        Spinner spinner = new Spinner(this);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        return spinner;
+    }
+
+    private LinearLayout timeControl(String label, int selectedMinute) {
+        LinearLayout control = new LinearLayout(this);
+        control.setOrientation(LinearLayout.VERTICAL);
+        control.addView(settingsLabel(label), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+        Spinner spinner = settingsSpinner(timeLabels());
+        spinner.setSelection(Math.floorMod(selectedMinute, 24 * 60) / 30);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                int day = label.startsWith("DAY") ? position * 30 : dayNightSettings.dayMinute();
+                int night = label.startsWith("NIGHT") ? position * 30
+                        : dayNightSettings.nightMinute();
+                dayNightSettings.setManualTimes(day, night);
+                broadcastConfigurationChanged();
+                refreshSettingsStatus();
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        control.addView(spinner, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+        return control;
+    }
+
+    private void enableDayNightFromSettings() {
+        if (!dayNightSettings.hasCompletePools()) {
+            Toast.makeText(this,
+                    "Add slideshow wallpapers for both Day and Night before enabling the schedule.",
+                    Toast.LENGTH_LONG).show();
+            refreshSettingsStatus();
+            return;
+        }
+        if (dayNightSettings.mode() == ScheduleMode.AUTO && !hasAmbientLightSensor()
+                && !dayNightSettings.hasCoarseLocation()) {
+            requestAutomaticLocation(true);
+            return;
+        }
+        dayNightSettings.setEnabled(true);
+        broadcastConfigurationChanged();
+        refreshSettingsStatus();
+    }
+
+    private void requestAutomaticLocation(boolean enableAfter) {
+        pendingEnableDayNight = enableAfter;
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
+                    REQUEST_COARSE_LOCATION);
+            return;
+        }
+        resolveCoarseLocation();
+    }
+
+    private void resolveCoarseLocation() {
+        if (settingsLocationButton != null) {
+            settingsLocationButton.setText(R.string.finding_location);
+            settingsLocationButton.setEnabled(false);
+        }
+        locationClient.request(new CoarseLocationClient.Callback() {
+            @Override
+            public void onLocation(Location location) {
+                dayNightSettings.setCoarseLocation(location.getLatitude(),
+                        location.getLongitude(), location.getTime() > 0
+                                ? location.getTime() : System.currentTimeMillis());
+                boolean shouldEnable = pendingEnableDayNight;
+                pendingEnableDayNight = false;
+                if (shouldEnable) dayNightSettings.setEnabled(true);
+                broadcastConfigurationChanged();
+                refreshSettingsStatus();
+                Toast.makeText(MainActivity.this,
+                        "Automatic sunrise and sunset times are ready.",
+                        Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onError(String message) {
+                boolean shouldEnable = pendingEnableDayNight;
+                pendingEnableDayNight = false;
+                dayNightSettings.setMode(ScheduleMode.MANUAL);
+                if (shouldEnable) dayNightSettings.setEnabled(true);
+                broadcastConfigurationChanged();
+                refreshSettingsStatus();
+                Toast.makeText(MainActivity.this, message + ". Using manual times.",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+    }
+
+    private void refreshSettingsStatus() {
+        if (settingsDayNightStatus == null || settingsDayNightToggle == null) return;
+        int dayCount = dayNightSettings.eligibleCount(DayPhase.DAY);
+        int nightCount = dayNightSettings.eligibleCount(DayPhase.NIGHT);
+        DayPhase phase = dayNightSettings.currentPhase(System.currentTimeMillis(), null);
+        String method;
+        if (dayNightSettings.mode() == ScheduleMode.MANUAL) {
+            method = "Manual " + DayPhaseResolver.formatMinute(dayNightSettings.dayMinute())
+                    + " / " + DayPhaseResolver.formatMinute(dayNightSettings.nightMinute());
+        } else if (hasAmbientLightSensor()) {
+            method = "Automatic ambient-light sensor";
+        } else if (dayNightSettings.hasCoarseLocation()) {
+            method = "Automatic on-device sunrise/sunset";
+        } else {
+            method = "Automatic needs approximate location";
+        }
+        settingsDayNightStatus.setText(getString(R.string.day_night_status,
+                dayNightSettings.isEnabled() ? "ON" : "OFF", phase.label,
+                getResources().getQuantityString(R.plurals.day_wallpapers, dayCount, dayCount),
+                getResources().getQuantityString(
+                        R.plurals.night_wallpapers, nightCount, nightCount), method));
+        settingsDayNightStatus.setTextColor(dayNightSettings.isEnabled() ? Ui.GREEN : Ui.MUTED);
+        settingsDayNightToggle.setText(dayNightSettings.isEnabled()
+                ? "Turn Day & Night off" : "Turn Day & Night on");
+        settingsDayNightToggle.setTextColor(dayNightSettings.isEnabled() ? Ui.CORAL : Ui.NAV);
+        settingsDayNightToggle.setBackground(Ui.rounded(dayNightSettings.isEnabled()
+                        ? Ui.SURFACE_HIGH : Ui.CYAN, Ui.dp(this, 12),
+                dayNightSettings.isEnabled() ? Ui.CORAL : Ui.CYAN, Ui.dp(this, 1)));
+        if (settingsLocationButton != null) {
+            if (dayNightSettings.hasCoarseLocation()) {
+                settingsLocationButton.setText(getString(R.string.refresh_location_saved,
+                        android.text.format.DateFormat.format(
+                                "dd MMM", new Date(dayNightSettings.locationTime()))));
+            } else {
+                settingsLocationButton.setText(R.string.refresh_location);
+            }
+            settingsLocationButton.setEnabled(true);
+            settingsLocationButton.setVisibility(hasAmbientLightSensor() ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private String storageSummary() {
+        return String.format(Locale.ROOT,
+                "Preview cache: %.1f MB / 96 MB\nDownloaded library: %.1f MB",
+                previewCache.diskBytes() / (1024.0 * 1024.0),
+                WallpaperStore.totalBytes(this) / (1024.0 * 1024.0));
+    }
+
+    private boolean hasAmbientLightSensor() {
+        SensorManager manager = (SensorManager) getSystemService(SENSOR_SERVICE);
+        return manager != null && manager.getDefaultSensor(Sensor.TYPE_LIGHT) != null;
+    }
+
+    private void broadcastConfigurationChanged() {
+        sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                .setPackage(getPackageName()));
+    }
+
+    private static String[] scheduleModeLabels() {
+        ScheduleMode[] values = ScheduleMode.values();
+        String[] labels = new String[values.length];
+        for (int index = 0; index < values.length; index++) labels[index] = values[index].label;
+        return labels;
+    }
+
+    private static String[] timeLabels() {
+        String[] labels = new String[48];
+        for (int index = 0; index < labels.length; index++) {
+            labels[index] = DayPhaseResolver.formatMinute(index * 30);
+        }
+        return labels;
+    }
+
     private void showInfo() {
-        double previewMb = previewCache.diskBytes() / (1024.0 * 1024.0);
-        double libraryMb = WallpaperStore.totalBytes(this) / (1024.0 * 1024.0);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(Ui.dp(this, 24), Ui.dp(this, 20),
@@ -1151,21 +1640,24 @@ public final class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                         Ui.dp(this, 42)));
 
-        String message = String.format(Locale.ROOT,
-                AppMetadata.versionLabel() + "\n\n"
-                        + "• Every download joins the slideshow automatically\n"
-                        + "• Static and animated previews remain in a bounded local cache\n"
-                        + "• No account, analytics, advertising, location or storage permission\n\n"
-                        + "Preview cache: %.1f MB / 96 MB\n"
-                        + "Downloaded library: %.1f MB\n\n"
-                        + "Deckscape checks its official GitHub releases once per day. New APKs "
-                        + "download automatically over any internet connection, including mobile "
-                        + "data, then wait for you to approve installation.",
-                previewMb, libraryMb);
+        String message = AppMetadata.versionLabel() + "\n"
+                + "Landscape wallpapers for Android head units\n\n"
+                + "Created by Paul Hepple / MetalHepple and released under the MIT Licence.\n"
+                + "No accounts, advertising, analytics or tracking. Approximate location is used "
+                + "only on-device when you enable automatic Day & Night scheduling.";
         TextView copy = Ui.text(this, message, 13, Ui.MUTED);
         copy.setLineSpacing(Ui.dp(this, 3), 1f);
         panel.addView(copy, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 268)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 128)));
+
+        TextView contributors = Ui.text(this, contributorsSummary(aboutMetadata), 13, Ui.TEXT);
+        contributors.setPadding(Ui.dp(this, 14), Ui.dp(this, 8),
+                Ui.dp(this, 14), Ui.dp(this, 8));
+        contributors.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        contributors.setLineSpacing(Ui.dp(this, 2), 1f);
+        panel.addView(contributors, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 76)));
 
         infoUpdateStatus = Ui.text(this, updateSummary(), 13,
                 updateState != null && updateState.phase == UpdateManager.Phase.READY
@@ -1178,14 +1670,15 @@ public final class MainActivity extends Activity {
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        Button clear = Ui.actionButton(this, "Clear previews", false);
-        Button saver = Ui.actionButton(this, previewCache.isDataSaverEnabled()
-                ? "Data saver: on" : "Data saver: off", false);
+        Button licences = Ui.actionButton(this, "Licences", false);
+        Button source = Ui.actionButton(this, "GitHub", false);
+        Button support = Ui.actionButton(this, "Support", false);
         Button check = Ui.actionButton(this, updateState != null && updateState.release != null
                 ? "View update" : "Check updates", true);
         Button done = Ui.button(this, "Done", true);
-        addEqualDialogAction(actions, clear, false);
-        addEqualDialogAction(actions, saver, true);
+        addEqualDialogAction(actions, licences, false);
+        addEqualDialogAction(actions, source, true);
+        addEqualDialogAction(actions, support, true);
         addEqualDialogAction(actions, check, true);
         addEqualDialogAction(actions, done, true);
         panel.addView(actions, new LinearLayout.LayoutParams(
@@ -1193,18 +1686,10 @@ public final class MainActivity extends Activity {
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         infoDialog = dialog;
-        clear.setOnClickListener(view -> {
-            previewCache.clear();
-            gridAdapter.notifyDataSetChanged();
-            setStatus("Preview cache cleared.");
-            dialog.dismiss();
-        });
-        saver.setOnClickListener(view -> {
-            boolean enabled = !previewCache.isDataSaverEnabled();
-            previewCache.setDataSaverEnabled(enabled);
-            saver.setText(enabled ? "Data saver: on" : "Data saver: off");
-            setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
-        });
+        licences.setOnClickListener(view -> showLicences());
+        source.setOnClickListener(view -> openExternal(
+                "https://github.com/MetalHepple/Deckscape"));
+        support.setOnClickListener(view -> openExternal("https://ko-fi.com/metalhepple"));
         check.setOnClickListener(view -> {
             if (updateState != null && updateState.release != null) {
                 dialog.dismiss();
@@ -1219,7 +1704,106 @@ public final class MainActivity extends Activity {
             infoUpdateStatus = null;
         });
         dialog.show();
-        styleWideDialog(dialog, 900);
+        styleWideDialog(dialog, 1_000);
+
+        io.execute(() -> {
+            RepositoryMetadata loaded = metadataClient.load(new ArrayList<>(sources));
+            runOnUiThread(() -> {
+                aboutMetadata = loaded;
+                if (dialog.isShowing()) contributors.setText(contributorsSummary(loaded));
+            });
+        });
+    }
+
+    private String contributorsSummary(RepositoryMetadata metadata) {
+        if (metadata == null) return "CONTRIBUTORS  •  Loading from GitHub…";
+        if (metadata.contributors.isEmpty()) {
+            return "CONTRIBUTORS  •  MetalHepple\nGitHub contributor data is unavailable offline.";
+        }
+        StringBuilder value = new StringBuilder("CONTRIBUTORS  •  ");
+        for (int index = 0; index < metadata.contributors.size(); index++) {
+            if (index > 0) value.append("  ·  ");
+            RepositoryMetadata.Contributor contributor = metadata.contributors.get(index);
+            value.append(contributor.login);
+            if (contributor.contributions > 0) {
+                value.append(" (").append(contributor.contributions).append(')');
+            }
+        }
+        if (metadata.stale) value.append("\nShowing saved GitHub metadata while offline.");
+        return value.toString();
+    }
+
+    /** Displays bundled legal text plus cached repository-level licence declarations. */
+    private void showLicences() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 16),
+                Ui.dp(this, 22), Ui.dp(this, 12));
+        panel.addView(Ui.title(this, "Licences & source notices", 21),
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, 42)));
+
+        StringBuilder content = new StringBuilder();
+        content.append("DECKSCAPE\nCopyright © 2026 Paul Hepple\n\n")
+                .append(readAssetText("LICENSE")).append("\n\n")
+                .append(readAssetText("THIRD_PARTY_NOTICES.md")).append("\n\n")
+                .append("LIVE REPOSITORY METADATA\n")
+                .append("Repository licences may not cover individual collected wallpaper images.\n\n");
+        RepositoryMetadata metadata = aboutMetadata;
+        if (metadata == null || metadata.licenses.isEmpty()) {
+            content.append("Licence metadata is not cached yet. Reopen About while online to refresh it.");
+        } else {
+            for (RepositoryMetadata.SourceLicense license : metadata.licenses.values()) {
+                content.append(license.repositoryName).append(" — ")
+                        .append(license.licenseName);
+                if (!license.spdxId.isEmpty()) content.append(" (").append(license.spdxId).append(')');
+                content.append('\n').append(license.pageUrl).append("\n\n");
+            }
+        }
+
+        TextView text = Ui.text(this, content.toString(), 12, Ui.MUTED);
+        text.setTextIsSelectable(true);
+        text.setAutoLinkMask(android.text.util.Linkify.WEB_URLS);
+        text.setLinkTextColor(Ui.CYAN);
+        text.setPadding(Ui.dp(this, 14), Ui.dp(this, 10),
+                Ui.dp(this, 14), Ui.dp(this, 10));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        scroll.addView(text, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 430)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button done = Ui.button(this, "Done", true);
+        actions.addView(done, new LinearLayout.LayoutParams(
+                Ui.dp(this, 112), Ui.dp(this, 46)));
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        done.setOnClickListener(view -> dialog.dismiss());
+        dialog.show();
+        styleWideDialog(dialog, 1_020);
+    }
+
+    private String readAssetText(String name) {
+        try (java.io.InputStream input = getAssets().open(name);
+             java.util.Scanner scanner = new java.util.Scanner(input, "UTF-8")
+                     .useDelimiter("\\A")) {
+            return scanner.hasNext() ? scanner.next() : "";
+        } catch (Exception exception) {
+            return "Unable to load " + name + ".";
+        }
+    }
+
+    private void openExternal(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception exception) {
+            Toast.makeText(this, "No browser is available.", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void addEqualDialogAction(LinearLayout row, Button button, boolean margin) {

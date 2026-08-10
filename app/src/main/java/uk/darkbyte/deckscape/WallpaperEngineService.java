@@ -12,6 +12,10 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Movie;
 import android.graphics.Paint;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -37,6 +41,9 @@ public final class WallpaperEngineService extends WallpaperService {
     static final String PREF_CURRENT_FILE = "current_file";
     static final String PREF_LAST_SWITCH = "last_switch_ms";
     static final String PREF_DECODE_STATUS = "last_decode_status";
+    static final String PREF_RENDER_STATUS = "last_render_status";
+    static final String PREF_MANUAL_OVERRIDE = "manual_wallpaper_override";
+    static final String PREF_LAST_PHASE = "last_day_phase";
     static final long DEFAULT_INTERVAL = 3_600_000L;
 
     @Override
@@ -50,20 +57,44 @@ public final class WallpaperEngineService extends WallpaperService {
                 | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
         private final Runnable drawRunnable = this::drawFrame;
         private final SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
+        private final DayNightSettings dayNight = new DayNightSettings(WallpaperEngineService.this);
+        private final WallpaperProfileStore profiles =
+                new WallpaperProfileStore(WallpaperEngineService.this);
+        private final AmbientLightTracker lightTracker = new AmbientLightTracker();
+        private final SensorManager sensorManager =
+                (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        private final Sensor lightSensor = sensorManager == null ? null
+                : sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        private final SensorEventListener lightListener = new SensorEventListener() {
+            @Override
+            public void onSensorChanged(SensorEvent event) {
+                DayPhase before = lightTracker.phase();
+                DayPhase after = lightTracker.update(event.values[0], SystemClock.elapsedRealtime());
+                if (after != before) drawSoon();
+            }
+
+            @Override
+            public void onAccuracyChanged(Sensor sensor, int accuracy) {
+                // Schedule changes use debounced readings; accuracy callbacks need no action.
+            }
+        };
         private boolean visible;
         private boolean receiverRegistered;
+        private boolean sensorRegistered;
         private int surfaceWidth;
         private int surfaceHeight;
         private File loadedFile;
         private Bitmap bitmap;
         private Movie movie;
         private long movieStartUptime;
+        private String lastRenderStatus = "";
 
         private final BroadcastReceiver commands = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 if (ACTION_NEXT.equals(intent.getAction())) nextWallpaper();
                 else {
+                    updateLightSensor();
                     releaseDecoded();
                     drawSoon();
                 }
@@ -90,6 +121,7 @@ public final class WallpaperEngineService extends WallpaperService {
         @Override
         public void onVisibilityChanged(boolean isVisible) {
             visible = isVisible;
+            updateLightSensor();
             if (visible) drawSoon();
             else handler.removeCallbacks(drawRunnable);
         }
@@ -113,6 +145,7 @@ public final class WallpaperEngineService extends WallpaperService {
         @Override
         public void onDestroy() {
             handler.removeCallbacks(drawRunnable);
+            unregisterLightSensor();
             releaseDecoded();
             if (receiverRegistered) {
                 try {
@@ -130,27 +163,55 @@ public final class WallpaperEngineService extends WallpaperService {
         }
 
         private void drawFrame() {
-            if (!visible || surfaceWidth <= 0 || surfaceHeight <= 0) return;
-            List<File> files = WallpaperStore.list(WallpaperEngineService.this);
+            if (!visible) return;
+            if (dayNight.disableIfIncomplete()) updateLightSensor();
+            long now = System.currentTimeMillis();
+            DayPhase phase = dayNight.isEnabled()
+                    ? dayNight.currentPhase(now, lightTracker.phase()) : null;
+            List<File> files = phase == null ? WallpaperStore.list(WallpaperEngineService.this)
+                    : dayNight.eligibleFiles(phase);
             if (files.isEmpty()) {
                 drawFallback("Choose a wallpaper in Deckscape");
                 return;
             }
 
-            long now = System.currentTimeMillis();
             long lastSwitch = preferences.getLong(PREF_LAST_SWITCH, 0);
             long interval = preferences.getLong(PREF_INTERVAL, DEFAULT_INTERVAL);
-            File selected = WallpaperStore.current(WallpaperEngineService.this, files);
+            File selected = WallpaperStore.selectedDownloaded(WallpaperEngineService.this);
+            boolean manualOverride = preferences.getBoolean(PREF_MANUAL_OVERRIDE, false)
+                    && selected != null;
+            String savedPhase = preferences.getString(PREF_LAST_PHASE, "");
+            boolean phaseChanged = phase != null && !phase.name().equals(savedPhase);
+
+            if (phaseChanged) {
+                selected = WallpaperStore.nextForPhase(
+                        WallpaperEngineService.this, selected, phase);
+                if (selected != null) WallpaperStore.selectForEngine(
+                        WallpaperEngineService.this, selected);
+                preferences.edit().putString(PREF_LAST_PHASE, phase.name()).apply();
+                lastSwitch = now;
+                manualOverride = false;
+                releaseDecoded();
+            } else if (manualOverride && interval > 0 && lastSwitch > 0
+                    && now - lastSwitch >= interval) {
+                manualOverride = false;
+                preferences.edit().putBoolean(PREF_MANUAL_OVERRIDE, false).apply();
+            }
+
+            if (!manualOverride && (selected == null || !files.contains(selected))) {
+                selected = WallpaperStore.current(WallpaperEngineService.this, files);
+                WallpaperStore.selectForEngine(WallpaperEngineService.this, selected);
+                lastSwitch = now;
+                releaseDecoded();
+            }
             int index = Math.max(0, files.indexOf(selected));
             if (lastSwitch == 0) {
                 preferences.edit().putLong(PREF_LAST_SWITCH, now).apply();
-            } else if (RotationPolicy.shouldRotate(now, lastSwitch, interval, files.size())) {
+            } else if (!manualOverride
+                    && RotationPolicy.shouldRotate(now, lastSwitch, interval, files.size())) {
                 index = RotationPolicy.nextIndex(index, files.size());
                 selected = files.get(index);
-                preferences.edit()
-                        .putString(PREF_CURRENT_FILE, selected.getName())
-                        .putLong(PREF_LAST_SWITCH, now)
-                        .apply();
+                WallpaperStore.selectForEngine(WallpaperEngineService.this, selected);
                 releaseDecoded();
             }
 
@@ -161,14 +222,15 @@ public final class WallpaperEngineService extends WallpaperService {
         }
 
         private void nextWallpaper() {
-            List<File> files = WallpaperStore.list(WallpaperEngineService.this);
+            DayPhase phase = dayNight.isEnabled()
+                    ? dayNight.currentPhase(System.currentTimeMillis(), lightTracker.phase()) : null;
+            List<File> files = phase == null ? WallpaperStore.list(WallpaperEngineService.this)
+                    : dayNight.eligibleFiles(phase);
             if (files.isEmpty()) return;
-            File selected = WallpaperStore.current(WallpaperEngineService.this, files);
-            int next = RotationPolicy.nextIndex(Math.max(0, files.indexOf(selected)), files.size());
-            preferences.edit()
-                    .putString(PREF_CURRENT_FILE, files.get(next).getName())
-                    .putLong(PREF_LAST_SWITCH, System.currentTimeMillis())
-                    .apply();
+            File selected = WallpaperStore.selectedDownloaded(WallpaperEngineService.this);
+            int current = files.indexOf(selected);
+            int next = current < 0 ? 0 : RotationPolicy.nextIndex(current, files.size());
+            WallpaperStore.selectForEngine(WallpaperEngineService.this, files.get(next));
             releaseDecoded();
             drawSoon();
         }
@@ -209,28 +271,35 @@ public final class WallpaperEngineService extends WallpaperService {
                 canvas = holder.lockCanvas();
                 if (canvas == null) return;
                 canvas.drawColor(Color.BLACK);
+                int canvasWidth = canvas.getWidth();
+                int canvasHeight = canvas.getHeight();
+                WallpaperProfile profile = profiles.get(loadedFile);
                 if (movie != null && movie.width() > 0 && movie.height() > 0) {
                     int duration = movie.duration() > 0 ? movie.duration() : 1_000;
                     movie.setTime((int) ((SystemClock.uptimeMillis() - movieStartUptime) % duration));
-                    float scale = Math.max(surfaceWidth / (float) movie.width(),
-                            surfaceHeight / (float) movie.height());
-                    float left = (surfaceWidth - movie.width() * scale) / 2f;
-                    float top = (surfaceHeight - movie.height() * scale) / 2f;
+                    WallpaperTransform.Result transform = WallpaperTransform.calculate(
+                            movie.width(), movie.height(), canvasWidth, canvasHeight,
+                            profile.scaleMode, dayNight.defaultScaleMode(), profile.zoom,
+                            profile.focusX, profile.focusY);
                     canvas.save();
-                    canvas.translate(left, top);
-                    canvas.scale(scale, scale);
+                    canvas.translate(transform.left, transform.top);
+                    canvas.scale(transform.scaleX, transform.scaleY);
                     movie.draw(canvas, 0, 0, bitmapPaint);
                     canvas.restore();
+                    recordRenderStatus(name, movie.width(), movie.height(), canvasWidth,
+                            canvasHeight, profile, transform);
                 } else if (bitmap != null && bitmap.getWidth() > 0 && bitmap.getHeight() > 0) {
-                    float scale = Math.max(surfaceWidth / (float) bitmap.getWidth(),
-                            surfaceHeight / (float) bitmap.getHeight());
-                    float left = (surfaceWidth - bitmap.getWidth() * scale) / 2f;
-                    float top = (surfaceHeight - bitmap.getHeight() * scale) / 2f;
+                    WallpaperTransform.Result transform = WallpaperTransform.calculate(
+                            bitmap.getWidth(), bitmap.getHeight(), canvasWidth, canvasHeight,
+                            profile.scaleMode, dayNight.defaultScaleMode(), profile.zoom,
+                            profile.focusX, profile.focusY);
                     canvas.save();
-                    canvas.translate(left, top);
-                    canvas.scale(scale, scale);
+                    canvas.translate(transform.left, transform.top);
+                    canvas.scale(transform.scaleX, transform.scaleY);
                     canvas.drawBitmap(bitmap, 0, 0, bitmapPaint);
                     canvas.restore();
+                    recordRenderStatus(name, bitmap.getWidth(), bitmap.getHeight(), canvasWidth,
+                            canvasHeight, profile, transform);
                 } else {
                     drawText(canvas, "Unable to decode " + name);
                 }
@@ -257,7 +326,42 @@ public final class WallpaperEngineService extends WallpaperService {
             paint.setColor(Color.WHITE);
             paint.setTextSize(38);
             paint.setTextAlign(Paint.Align.CENTER);
-            canvas.drawText(message, surfaceWidth / 2f, surfaceHeight / 2f, paint);
+            canvas.drawText(message, canvas.getWidth() / 2f, canvas.getHeight() / 2f, paint);
+        }
+
+        private void recordRenderStatus(String name, int sourceWidth, int sourceHeight,
+                                        int canvasWidth, int canvasHeight,
+                                        WallpaperProfile profile,
+                                        WallpaperTransform.Result transform) {
+            String status = name + " | source " + sourceWidth + "x" + sourceHeight
+                    + " | surface " + surfaceWidth + "x" + surfaceHeight
+                    + " | canvas " + canvasWidth + "x" + canvasHeight
+                    + " | " + profile.scaleMode.name()
+                    + " | scale " + String.format(java.util.Locale.ROOT, "%.3fx%.3f",
+                    transform.scaleX, transform.scaleY);
+            if (status.equals(lastRenderStatus)) return;
+            lastRenderStatus = status;
+            preferences.edit().putString(PREF_RENDER_STATUS, status).apply();
+            Log.i(TAG, status);
+        }
+
+        private void updateLightSensor() {
+            boolean shouldRegister = visible && dayNight.isEnabled()
+                    && dayNight.mode() == ScheduleMode.AUTO && lightSensor != null;
+            if (shouldRegister && !sensorRegistered) {
+                sensorRegistered = sensorManager.registerListener(lightListener, lightSensor,
+                        SensorManager.SENSOR_DELAY_NORMAL);
+            } else if (!shouldRegister) {
+                unregisterLightSensor();
+            }
+        }
+
+        private void unregisterLightSensor() {
+            if (sensorManager != null && sensorRegistered) {
+                sensorManager.unregisterListener(lightListener);
+            }
+            sensorRegistered = false;
+            lightTracker.reset();
         }
 
         private void releaseDecoded() {

@@ -1,10 +1,11 @@
 # Screenshot provenance
 
-The Deckscape screenshots in this directory were captured from version 1.4.0
-and 1.5.0 debug builds in an isolated Android emulator configured to 1920×1080
-at 240 dpi. They cover category browsing, wallpaper cards, live slideshow
-states, the downloaded library, and update status. They contain no vehicle,
-account, map, or location information.
+The screenshots used by the current README were captured from a version 1.6.0
+debug build in an isolated Android emulator configured to 1920×1080 at
+240 dpi. They cover category browsing, wallpaper display options, custom crop,
+day/night roles, settings, contributors, licences, and update status. Additional
+historic 1.4.0/1.5.0 screenshots are retained for interface provenance. None
+contain vehicle, account, map, or location information.
 
 The interface is Deckscape project material. Wallpaper previews visible inside
 the interface came from the public `fr0st-xyz/wallz` catalog and remain subject
