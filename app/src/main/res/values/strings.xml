@@ -4,11 +4,24 @@
     <string name="wallpaper_description">A landscape live-wallpaper gallery backed by user-selected GitHub repositories.</string>
     <string name="no_preview">NO PREVIEW</string>
     <string name="too_large">Too large</string>
-    <string name="info">Info</string>
+    <string name="info">About</string>
     <string name="update_available">Update</string>
     <string name="update_progress">↓  %1$d%%</string>
     <string name="install_update">Install update</string>
     <string name="retry_update">Try again</string>
     <string name="checking_update">Checking…</string>
     <string name="downloading_update">Downloading…</string>
+    <string name="finding_location">Finding approximate location…</string>
+    <string name="day_night_status">%1$s  •  %2$s now\n%3$s / %4$s  •  %5$s</string>
+    <plurals name="day_wallpapers">
+        <item quantity="one">%1$d day wallpaper</item>
+        <item quantity="other">%1$d day wallpapers</item>
+    </plurals>
+    <plurals name="night_wallpapers">
+        <item quantity="one">%1$d night wallpaper</item>
+        <item quantity="other">%1$d night wallpapers</item>
+    </plurals>
+    <string name="refresh_location">Refresh automatic location</string>
+    <string name="refresh_location_saved">Refresh automatic location • saved %1$s</string>
+    <string name="preview_unavailable">PREVIEW UNAVAILABLE</string>
 </resources>

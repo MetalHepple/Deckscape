@@ -10,8 +10,8 @@ android {
         applicationId = "uk.darkbyte.deckscape"
         minSdk = 28
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.5.0"
+        versionCode = 8
+        versionName = "1.6.0"
     }
 
     buildFeatures {

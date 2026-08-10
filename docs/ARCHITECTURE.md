@@ -4,25 +4,29 @@
 
 ```text
 GitHub Contents / Git Trees API
-              │
-              ▼
-  validated catalog + 2 h cache
-              │
-      ┌───────┴────────┐
-      ▼                ▼
-visible card  user presses Download/Show now
-      │                │
-      ▼                ▼
-wsrv.nl thumbnail bounded raw download
-or raw fallback          │
-      │           decoder validation
-480×270 JPEG            │
-preview cache           │
-                       ▼
-              private wallpaper library
-                       │
-                       ▼
-               WallpaperService engine
+                |
+                v
+    validated catalog + 2 h cache
+                |
+       +--------+---------+
+       v                  v
+ visible card       Download / Show now
+       |                  |
+       v                  v
+ wsrv.nl thumbnail   bounded raw download
+ or raw fallback           |
+       |              decoder validation
+ 480×270 JPEG              |
+ preview cache             v
+                 private wallpaper library
+                           |
+             +-------------+-------------+
+             v                           v
+ per-wallpaper profile          Day/Night eligibility
+             |                           |
+             +-------------+-------------+
+                           v
+                 WallpaperService engine
 ```
 
 Directory listings reuse the cached recursive Git tree to select one safe,
@@ -47,6 +51,11 @@ Both previews and installs enforce streamed byte limits. Installed files also
 undergo format/dimension decoding before their partial file is atomically
 renamed into the private library.
 
+`GitHubMetadataClient` separately loads public contributor and repository-level
+licence data for About. Requests remain under `api.github.com`, enforce a
+512 KB response cap, filter bot contributors, and use independent cache
+freshness windows. Wallpaper rendering never depends on this metadata.
+
 ## Caches
 
 - Catalog JSON: app cache directory, two-hour freshness, stale offline fallback,
@@ -57,6 +66,10 @@ renamed into the private library.
   decoded before display, and covered by the shared preview-cache ceiling.
 - Wallpaper library: app files directory, retained until app removal or future
   library-management action.
+- Contributor metadata: app cache directory, 24-hour freshness and stale
+  offline fallback.
+- Source-licence metadata: app cache directory, seven-day freshness and stale
+  offline fallback.
 
 ## Live wallpaper
 
@@ -66,13 +79,48 @@ are sampled down above 4,096 pixels per axis for runtime memory safety. GIFs
 use Android's platform `Movie` decoder at a 100 ms redraw cadence and stop
 scheduling frames immediately when the wallpaper becomes hidden.
 
-The app-private wallpaper library is also the slideshow membership list. Every
-validated download joins the rotation automatically; selecting **Show now**
-only updates the stable current filename. The Slideshow panel reads this same
-library and generates bounded local previews through the shared preview cache.
+`WallpaperProfileStore` keeps one immutable `WallpaperProfile` per stable
+filename. Profiles contain a display mode, bounded custom zoom/focal point, and
+a Both/Day/Night role. `WallpaperTransform` is the single pure transform used by
+the touch crop preview and live renderer. It calculates Fill, Fit, Stretch, and
+Custom matrices from the decoded source and the actual locked canvas size, so
+manufacturer-reported wallpaper hints cannot introduce unexpected bars.
+
+The app-private wallpaper library and a private exclusion set define slideshow
+membership. Every validated download joins automatically; selecting **Show
+now** updates the current filename and a manual-override flag without removing
+other files. The Library panel reads the same state and generates bounded local
+previews through the shared preview cache.
+
+When Day & Night is enabled, `DayNightSettings` filters included files by their
+roles. Both period pools must remain non-empty. `WallpaperEngineService`
+switches immediately when the current period changes, but otherwise preserves
+a manual Show now choice until the next normal slideshow interval. Emptying a
+pool through an exclusion or delete automatically disables the feature.
+
+Automatic period detection prefers an ambient-light sensor. The sensor is
+registered only while the wallpaper is visible; `AmbientLightTracker` uses
+separate day/night thresholds plus settling and hysteresis windows to avoid
+rapid changes. Without a sensor, a foreground-only approximate location fix is
+rounded to 0.1 degrees and used by `DayPhaseResolver` for on-device solar
+calculations. Manual times are the permission-free fallback. No background
+location service, remote solar API, or wakeup alarm is used.
 
 Android owns activation. Deckscape opens
 `ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.
+
+## Settings and metadata
+
+`MainActivity` owns the landscape Settings, Options, About, and licence panels.
+All mutating wallpaper actions flow through `WallpaperStore`,
+`WallpaperProfileStore`, or `DayNightSettings`, followed by a package-scoped
+library-changed broadcast. The engine reloads its files and profiles from those
+stores rather than accepting file paths or settings from external intents.
+
+Approximate location is requested only after an explicit Settings action.
+Android backup and device-transfer extraction are disabled, so private
+wallpapers, coordinates, profiles, and cached metadata are not opted into cloud
+backup by the app.
 
 ## Application updates
 

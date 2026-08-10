@@ -159,18 +159,54 @@ final class WallpaperStore {
     static File delete(Context context, File file) throws IOException {
         File installed = requireLibraryFile(context, file);
         if (!installed.delete()) throw new IOException("Unable to delete the wallpaper");
+        new WallpaperProfileStore(context).remove(installed);
         Set<String> excluded = excludedNames(context);
         if (excluded.remove(installed.getName())) saveExcludedNames(context, excluded);
         return ensureCurrentSelection(context);
     }
 
-    /** Selects an installed file for the live-wallpaper engine. */
+    /** Selects an installed file as an explicit user override. */
     static void select(Context context, File file) {
+        select(context, file, true);
+    }
+
+    /** Selects a file as part of automatic rotation or schedule repair. */
+    static void selectForEngine(Context context, File file) {
+        select(context, file, false);
+    }
+
+    private static void select(Context context, File file, boolean manualOverride) {
         context.getSharedPreferences(WallpaperEngineService.PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putString(WallpaperEngineService.PREF_CURRENT_FILE, file.getName())
                 .putLong(WallpaperEngineService.PREF_LAST_SWITCH, System.currentTimeMillis())
+                .putBoolean(WallpaperEngineService.PREF_MANUAL_OVERRIDE, manualOverride)
                 .apply();
+    }
+
+    /** Returns the selected file from the complete downloaded library, if it still exists. */
+    static File selectedDownloaded(Context context) {
+        String selected = context.getSharedPreferences(WallpaperEngineService.PREFS,
+                        Context.MODE_PRIVATE)
+                .getString(WallpaperEngineService.PREF_CURRENT_FILE, "");
+        for (File file : listDownloaded(context)) {
+            if (file.getName().equals(selected)) return file;
+        }
+        return null;
+    }
+
+    /** Chooses the next eligible file, preferring a wallpaper specific to the new period. */
+    static File nextForPhase(Context context, File current, DayPhase phase) {
+        List<File> eligible = new DayNightSettings(context).eligibleFiles(phase);
+        if (eligible.isEmpty()) return null;
+        WallpaperProfileStore profiles = new WallpaperProfileStore(context);
+        int start = current == null ? -1 : eligible.indexOf(current);
+        for (int offset = 1; offset <= eligible.size(); offset++) {
+            File candidate = eligible.get(Math.floorMod(start + offset, eligible.size()));
+            if (profiles.get(candidate).role != DayNightRole.BOTH) return candidate;
+        }
+        return current != null && eligible.contains(current) ? current
+                : eligible.get(Math.floorMod(start + 1, eligible.size()));
     }
 
     /** Resolves the selected file, falling back to the first installed wallpaper. */
@@ -247,13 +283,14 @@ final class WallpaperStore {
         }
         if (!included.isEmpty()) {
             File fallback = included.get(0);
-            select(context, fallback);
+            selectForEngine(context, fallback);
             return fallback;
         }
         context.getSharedPreferences(WallpaperEngineService.PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .remove(WallpaperEngineService.PREF_CURRENT_FILE)
                 .putLong(WallpaperEngineService.PREF_LAST_SWITCH, System.currentTimeMillis())
+                .putBoolean(WallpaperEngineService.PREF_MANUAL_OVERRIDE, false)
                 .apply();
         return null;
     }

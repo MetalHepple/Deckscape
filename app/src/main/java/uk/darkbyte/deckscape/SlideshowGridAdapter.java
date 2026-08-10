@@ -26,12 +26,13 @@ final class SlideshowGridAdapter extends BaseAdapter {
 
         void onSetIncluded(File file, boolean included);
 
-        void onDelete(File file);
+        void onOptions(File file);
     }
 
     private final Context context;
     private final PreviewCache previews;
     private final Listener listener;
+    private final WallpaperProfileStore profiles;
     private final List<File> files = new ArrayList<>();
     private final Set<String> includedNames = new HashSet<>();
     private String currentName = "";
@@ -40,6 +41,7 @@ final class SlideshowGridAdapter extends BaseAdapter {
         this.context = context;
         this.previews = previews;
         this.listener = listener;
+        profiles = new WallpaperProfileStore(context);
         refresh();
     }
 
@@ -79,6 +81,7 @@ final class SlideshowGridAdapter extends BaseAdapter {
         File file = getItem(position);
         boolean included = includedNames.contains(file.getName());
         boolean current = file.getName().equals(currentName);
+        WallpaperProfile profile = profiles.get(file);
 
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -134,6 +137,19 @@ final class SlideshowGridAdapter extends BaseAdapter {
         badgeParams.setMargins(Ui.dp(context, 7), Ui.dp(context, 7), 0, 0);
         imageFrame.addView(badge, badgeParams);
 
+        TextView roleBadge = Ui.title(context,
+                profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name(), 9);
+        roleBadge.setTextColor(Ui.NAV);
+        roleBadge.setGravity(Gravity.CENTER);
+        roleBadge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
+        roleBadge.setBackground(Ui.rounded(profile.role == DayNightRole.NIGHT
+                        ? Ui.CORAL : Ui.CYAN, Ui.dp(context, 7)));
+        FrameLayout.LayoutParams roleParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
+                Gravity.TOP | Gravity.END);
+        roleParams.setMargins(0, Ui.dp(context, 7), Ui.dp(context, 7), 0);
+        imageFrame.addView(roleBadge, roleParams);
+
         TextView title = Ui.title(context, WallpaperStore.displayName(file), 12);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -160,12 +176,9 @@ final class SlideshowGridAdapter extends BaseAdapter {
         membership.setOnClickListener(view -> listener.onSetIncluded(file, !included));
         actions.addView(membership, weightedButtonParams(true));
 
-        Button delete = compactButton("Delete", false);
-        delete.setTextColor(Ui.CORAL);
-        delete.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(context, 10),
-                Ui.CORAL, Ui.dp(context, 1)));
-        delete.setOnClickListener(view -> listener.onDelete(file));
-        actions.addView(delete, weightedButtonParams(true));
+        Button options = compactButton("Options", false);
+        options.setOnClickListener(view -> listener.onOptions(file));
+        actions.addView(options, weightedButtonParams(true));
 
         card.addView(actions, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 46)));

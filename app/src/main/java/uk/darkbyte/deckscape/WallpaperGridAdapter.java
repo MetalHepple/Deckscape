@@ -31,6 +31,8 @@ final class WallpaperGridAdapter extends BaseAdapter {
         void onAction(CatalogItem item);
 
         void onPreview(CatalogItem item);
+
+        void onOptions(CatalogItem item);
     }
 
     private final Context context;
@@ -282,6 +284,20 @@ final class WallpaperGridAdapter extends BaseAdapter {
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         actionParams.leftMargin = Ui.dp(context, 6);
         actions.addView(actionBox, actionParams);
+        if (installed) {
+            Button options = Ui.actionButton(context, "Options", false);
+            options.setSingleLine(true);
+            options.setTextSize(11);
+            options.setMinWidth(0);
+            options.setMinimumWidth(0);
+            options.setPadding(Ui.dp(context, 4), 0, Ui.dp(context, 4), 0);
+            options.setContentDescription("Options for " + WallpaperStore.displayName(item.name));
+            options.setOnClickListener(view -> listener.onOptions(item));
+            LinearLayout.LayoutParams optionsParams = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+            optionsParams.leftMargin = Ui.dp(context, 6);
+            actions.addView(options, optionsParams);
+        }
         card.addView(actions, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 46)));
         return card;
