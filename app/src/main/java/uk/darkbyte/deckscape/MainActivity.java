@@ -16,6 +16,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.location.Location;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.SpannableString;
@@ -57,7 +58,7 @@ import java.util.concurrent.Executors;
  * thread and are guarded by request generations when navigation supersedes an older request.
  */
 public final class MainActivity extends Activity {
-    private static final int REQUEST_COARSE_LOCATION = 41;
+    private static final int REQUEST_FOREGROUND_LOCATION = 41;
     private static final String UI_PREFS = "ui_state";
     private static final String KEY_LAST_SOURCE = "last_source";
     private static final String[] INTERVAL_LABELS = {
@@ -105,6 +106,7 @@ public final class MainActivity extends Activity {
     private AlertDialog settingsDialog;
     private Button settingsDayNightToggle;
     private TextView settingsDayNightStatus;
+    private Spinner settingsScheduleMode;
     private Button settingsLocationButton;
     private boolean pendingEnableDayNight;
     private AlertDialog infoDialog;
@@ -158,20 +160,27 @@ public final class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != REQUEST_COARSE_LOCATION) return;
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            resolveCoarseLocation();
+        if (requestCode != REQUEST_FOREGROUND_LOCATION) return;
+        if (hasUsableForegroundLocationPermission()) {
+            resolveAutomaticLocation();
         } else {
             boolean shouldEnable = pendingEnableDayNight;
             pendingEnableDayNight = false;
-            dayNightSettings.setMode(ScheduleMode.MANUAL);
-            if (shouldEnable) dayNightSettings.setEnabled(true);
-            broadcastConfigurationChanged();
             refreshSettingsStatus();
             Toast.makeText(this,
-                    "Approximate location was not enabled. Deckscape is using manual times.",
+                    shouldEnable
+                            ? "GPS access was not enabled. Day & Night remains off; choose Manual or try again."
+                            : "GPS access was not enabled. Choose Manual times or try again.",
                     Toast.LENGTH_LONG).show();
         }
+    }
+
+    @Override
+    protected void onStop() {
+        if (locationClient != null && locationClient.isRequesting()) {
+            cancelAutomaticLocation(false);
+        }
+        super.onStop();
     }
 
     @Override
@@ -1201,6 +1210,7 @@ public final class MainActivity extends Activity {
         settingsDayNightToggle = Ui.button(this, "", true);
         settingsDayNightToggle.setOnClickListener(view -> {
             if (dayNightSettings.isEnabled()) {
+                if (locationClient.isRequesting()) cancelAutomaticLocation(false);
                 dayNightSettings.setEnabled(false);
                 pendingEnableDayNight = false;
                 broadcastConfigurationChanged();
@@ -1214,9 +1224,9 @@ public final class MainActivity extends Activity {
 
         schedule.addView(settingsLabel("SCHEDULE METHOD"), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
-        Spinner mode = settingsSpinner(scheduleModeLabels());
-        mode.setSelection(dayNightSettings.mode().ordinal());
-        schedule.addView(mode, new LinearLayout.LayoutParams(
+        settingsScheduleMode = settingsSpinner(scheduleModeLabels());
+        settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
+        schedule.addView(settingsScheduleMode, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
         LinearLayout times = new LinearLayout(this);
@@ -1234,7 +1244,10 @@ public final class MainActivity extends Activity {
 
         settingsLocationButton = Ui.actionButton(this, "Refresh automatic location", false);
         settingsLocationButton.setSingleLine(true);
-        settingsLocationButton.setOnClickListener(view -> requestAutomaticLocation(false));
+        settingsLocationButton.setOnClickListener(view -> {
+            if (locationClient.isRequesting()) cancelAutomaticLocation(true);
+            else requestAutomaticLocation(false);
+        });
         schedule.addView(settingsLocationButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
@@ -1294,10 +1307,13 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         settingsDialog = dialog;
         boolean[] initializing = {true};
-        mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        settingsScheduleMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 ScheduleMode selected = ScheduleMode.values()[position];
+                if (selected != ScheduleMode.AUTO && locationClient.isRequesting()) {
+                    cancelAutomaticLocation(false);
+                }
                 dayNightSettings.setMode(selected);
                 if (!initializing[0] && selected == ScheduleMode.AUTO
                         && dayNightSettings.isEnabled() && !hasAmbientLightSensor()
@@ -1334,9 +1350,11 @@ public final class MainActivity extends Activity {
         });
         done.setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
+            if (locationClient.isRequesting()) cancelAutomaticLocation(false);
             if (settingsDialog == dialog) settingsDialog = null;
             settingsDayNightToggle = null;
             settingsDayNightStatus = null;
+            settingsScheduleMode = null;
             settingsLocationButton = null;
         });
         dialog.show();
@@ -1423,23 +1441,56 @@ public final class MainActivity extends Activity {
 
     private void requestAutomaticLocation(boolean enableAfter) {
         pendingEnableDayNight = enableAfter;
-        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
-                    REQUEST_COARSE_LOCATION);
+        if (!hasUsableForegroundLocationPermission()) {
+            showLocationPermissionExplanation();
             return;
         }
-        resolveCoarseLocation();
+        resolveAutomaticLocation();
     }
 
-    private void resolveCoarseLocation() {
+    private void showLocationPermissionExplanation() {
+        AlertDialog explanation = new AlertDialog.Builder(this)
+                .setTitle(R.string.location_permission_title)
+                .setMessage(R.string.location_permission_message)
+                .setNegativeButton("Not now", (ignored, which) -> {
+                    boolean shouldEnable = pendingEnableDayNight;
+                    pendingEnableDayNight = false;
+                    refreshSettingsStatus();
+                    if (shouldEnable) {
+                        Toast.makeText(this,
+                                "Day & Night remains off. Choose Manual or enable GPS access.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setPositiveButton("Continue", (ignored, which) -> requestPermissions(
+                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION},
+                        REQUEST_FOREGROUND_LOCATION))
+                .create();
+        explanation.setOnCancelListener(ignored -> {
+            pendingEnableDayNight = false;
+            refreshSettingsStatus();
+        });
+        explanation.show();
+        styleDialog(explanation);
+    }
+
+    private boolean hasUsableForegroundLocationPermission() {
+        boolean fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean coarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        return LocationPermissionPolicy.isSufficient(Build.VERSION.SDK_INT, fine, coarse);
+    }
+
+    private void resolveAutomaticLocation() {
         if (settingsLocationButton != null) {
-            settingsLocationButton.setText(R.string.finding_location);
-            settingsLocationButton.setEnabled(false);
+            settingsLocationButton.setText(R.string.cancel_location_search);
+            settingsLocationButton.setEnabled(true);
         }
         locationClient.request(new CoarseLocationClient.Callback() {
             @Override
-            public void onLocation(Location location) {
+            public void onLocation(Location location, boolean cached) {
                 dayNightSettings.setCoarseLocation(location.getLatitude(),
                         location.getLongitude(), location.getTime() > 0
                                 ? location.getTime() : System.currentTimeMillis());
@@ -1449,7 +1500,9 @@ public final class MainActivity extends Activity {
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
                 Toast.makeText(MainActivity.this,
-                        "Automatic sunrise and sunset times are ready.",
+                        cached
+                                ? "Automatic times are ready from a recent on-device location."
+                                : "Automatic sunrise and sunset times are ready.",
                         Toast.LENGTH_SHORT).show();
             }
 
@@ -1457,14 +1510,23 @@ public final class MainActivity extends Activity {
             public void onError(String message) {
                 boolean shouldEnable = pendingEnableDayNight;
                 pendingEnableDayNight = false;
-                dayNightSettings.setMode(ScheduleMode.MANUAL);
-                if (shouldEnable) dayNightSettings.setEnabled(true);
-                broadcastConfigurationChanged();
                 refreshSettingsStatus();
-                Toast.makeText(MainActivity.this, message + ". Using manual times.",
+                Toast.makeText(MainActivity.this,
+                        shouldEnable ? message + ". Day & Night remains off." : message,
                         Toast.LENGTH_LONG).show();
             }
         });
+    }
+
+    private void cancelAutomaticLocation(boolean notify) {
+        if (!locationClient.isRequesting()) return;
+        locationClient.cancel();
+        pendingEnableDayNight = false;
+        refreshSettingsStatus();
+        if (notify) {
+            Toast.makeText(this, "Location search cancelled. Your schedule is unchanged.",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void refreshSettingsStatus() {
@@ -1481,7 +1543,7 @@ public final class MainActivity extends Activity {
         } else if (dayNightSettings.hasCoarseLocation()) {
             method = "Automatic on-device sunrise/sunset";
         } else {
-            method = "Automatic needs approximate location";
+            method = "Automatic needs location • manual times used for now";
         }
         settingsDayNightStatus.setText(getString(R.string.day_night_status,
                 dayNightSettings.isEnabled() ? "ON" : "OFF", phase.label,
@@ -1495,8 +1557,15 @@ public final class MainActivity extends Activity {
         settingsDayNightToggle.setBackground(Ui.rounded(dayNightSettings.isEnabled()
                         ? Ui.SURFACE_HIGH : Ui.CYAN, Ui.dp(this, 12),
                 dayNightSettings.isEnabled() ? Ui.CORAL : Ui.CYAN, Ui.dp(this, 1)));
+        if (settingsScheduleMode != null
+                && settingsScheduleMode.getSelectedItemPosition()
+                != dayNightSettings.mode().ordinal()) {
+            settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
+        }
         if (settingsLocationButton != null) {
-            if (dayNightSettings.hasCoarseLocation()) {
+            if (locationClient.isRequesting()) {
+                settingsLocationButton.setText(R.string.cancel_location_search);
+            } else if (dayNightSettings.hasCoarseLocation()) {
                 settingsLocationButton.setText(getString(R.string.refresh_location_saved,
                         android.text.format.DateFormat.format(
                                 "dd MMM", new Date(dayNightSettings.locationTime()))));
@@ -1552,8 +1621,9 @@ public final class MainActivity extends Activity {
         String message = AppMetadata.versionLabel() + "\n"
                 + "Landscape wallpapers for Android head units\n\n"
                 + "Created by Paul Hepple (@MetalHepple) and released under the MIT Licence.\n"
-                + "No accounts, advertising, analytics or tracking. Approximate location is used "
-                + "only on-device when you enable automatic Day & Night scheduling.";
+                + "No accounts, advertising, analytics or tracking. A one-time foreground "
+                + "location fix is rounded and kept only on-device when you enable automatic "
+                + "Day & Night scheduling.";
         TextView copy = Ui.text(this, message, 13, Ui.MUTED);
         copy.setLineSpacing(Ui.dp(this, 3), 1f);
         panel.addView(copy, new LinearLayout.LayoutParams(

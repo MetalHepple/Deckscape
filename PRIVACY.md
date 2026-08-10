@@ -1,7 +1,7 @@
 # Privacy
 
 Deckscape does not include analytics, advertising, user accounts, telemetry,
-precise/background location, or third-party tracking SDKs.
+background location, or third-party tracking SDKs.
 
 The app connects directly over HTTPS to:
 
@@ -31,7 +31,7 @@ Data saver is enabled by default and can be disabled from **Settings**; cached
 previews can be cleared there as well. Deckscape's developer does not operate
 an intermediary server.
 
-## Approximate location and ambient light
+## Location and ambient light
 
 Day & Night scheduling is optional and off by default. If the Android device
 has an ambient-light sensor, automatic scheduling uses that sensor only while
@@ -39,14 +39,21 @@ the live wallpaper is visible. Light readings stay on the device and require no
 location permission.
 
 On devices without a light sensor, selecting **Refresh automatic location** in
-the visible Settings panel requests Android's approximate location permission.
-Deckscape asks for one foreground fix, stops listening immediately, rounds
-latitude and longitude to 0.1 degrees, and stores only that rounded coordinate
-and its timestamp in private app preferences. Sunrise and sunset are then
-calculated locally. The coordinate is not placed in a GitHub, preview-service,
-update, contributor, licence, or support request. Deckscape does not request
-precise or background location. Declining permission or using **Manual times**
-keeps Day & Night usable without location.
+the visible Settings panel requests one foreground location fix. Android 12 and
+newer can grant approximate access. Android 11 and older head units without a
+working network-location provider may require foreground precise permission so
+Deckscape can receive a GPS fix. The app explains this before opening Android's
+permission prompt.
+
+Regardless of the permission granted, Deckscape stops listening after the
+first fix, immediately rounds latitude and longitude to 0.1 degrees, discards
+the precise result, and stores only that rounded coordinate and its timestamp
+in private app preferences. A search lasts at most one minute and can be
+cancelled from Settings. Sunrise and sunset are calculated locally. The
+coordinate is not placed in a GitHub, preview-service, update, contributor,
+licence, or support request. Deckscape never requests background location.
+Declining permission or using **Manual times** keeps Day & Night usable without
+location.
 
 The **Support** control opens the external Ko-fi website only when the user
 selects it. Deckscape does not embed a payment SDK or receive payment details.

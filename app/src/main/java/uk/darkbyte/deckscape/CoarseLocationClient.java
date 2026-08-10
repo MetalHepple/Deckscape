@@ -13,23 +13,23 @@ import android.os.Looper;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Requests one foreground-only coarse location fix and stops immediately after delivery. */
+/** Requests one foreground-only location fix and stops immediately after delivery. */
 final class CoarseLocationClient {
     /** Receives a single location or an actionable failure message. */
     interface Callback {
-        void onLocation(Location location);
+        void onLocation(Location location, boolean cached);
 
         void onError(String message);
     }
 
-    private static final long TIMEOUT_MS = 15_000L;
-    private static final long ACCEPT_LAST_KNOWN_AGE_MS = 30L * 24 * 60 * 60 * 1000;
+    private static final String FUSED_PROVIDER = "fused";
 
     private final Context context;
     private final LocationManager manager;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private LocationListener listener;
     private Runnable timeout;
+    private boolean requesting;
 
     CoarseLocationClient(Context context) {
         this.context = context.getApplicationContext();
@@ -39,9 +39,12 @@ final class CoarseLocationClient {
     @SuppressWarnings("MissingPermission") // Permission is checked before provider access.
     void request(Callback callback) {
         cancel();
-        if (context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            callback.onError("Approximate location permission is not enabled");
+        boolean coarse = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        if (!coarse && !fine) {
+            callback.onError("Foreground location permission is not enabled");
             return;
         }
         if (manager == null) {
@@ -51,23 +54,25 @@ final class CoarseLocationClient {
 
         List<String> providers = enabledProviders();
         Location best = bestLastKnown(providers);
-        if (best != null && System.currentTimeMillis() - best.getTime()
-                <= ACCEPT_LAST_KNOWN_AGE_MS) {
-            callback.onLocation(best);
+        long now = System.currentTimeMillis();
+        if (best != null && LocationFixPolicy.isRecent(now, best.getTime(),
+                LocationFixPolicy.IMMEDIATE_CACHE_AGE_MS)) {
+            callback.onLocation(best, true);
             return;
         }
+        Location fallback = best != null && LocationFixPolicy.isRecent(now, best.getTime(),
+                LocationFixPolicy.FALLBACK_CACHE_AGE_MS) ? best : null;
         if (providers.isEmpty()) {
-            if (best != null) callback.onLocation(best);
-            else callback.onError("No location provider is available; use manual times");
+            if (fallback != null) callback.onLocation(fallback, true);
+            else callback.onError("No Android location provider is available. Choose Manual times");
             return;
         }
 
-        Location fallback = best;
         listener = new LocationListener() {
             @Override
             public void onLocationChanged(Location location) {
                 cancel();
-                callback.onLocation(location);
+                callback.onLocation(location, false);
             }
 
             @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
@@ -88,16 +93,22 @@ final class CoarseLocationClient {
         }
         if (!registered) {
             cancel();
-            if (fallback != null) callback.onLocation(fallback);
-            else callback.onError("Unable to request an approximate location; use manual times");
+            if (fallback != null) callback.onLocation(fallback, true);
+            else callback.onError("Android would not start a location request. Choose Manual times");
             return;
         }
+        requesting = true;
         timeout = () -> {
             cancel();
-            if (fallback != null) callback.onLocation(fallback);
-            else callback.onError("Location timed out; use manual times or try again outdoors");
+            if (fallback != null) callback.onLocation(fallback, true);
+            else callback.onError("No GPS fix arrived within one minute. Try again outdoors or choose Manual times");
         };
-        handler.postDelayed(timeout, TIMEOUT_MS);
+        handler.postDelayed(timeout, LocationFixPolicy.REQUEST_TIMEOUT_MS);
+    }
+
+    /** Returns whether an active provider request can currently be cancelled. */
+    boolean isRequesting() {
+        return requesting;
     }
 
     void cancel() {
@@ -111,12 +122,12 @@ final class CoarseLocationClient {
             }
         }
         listener = null;
+        requesting = false;
     }
 
     private List<String> enabledProviders() {
         List<String> result = new ArrayList<>();
-        for (String provider : new String[]{LocationManager.NETWORK_PROVIDER,
-                LocationManager.GPS_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
+        for (String provider : providerNames()) {
             try {
                 if (manager.isProviderEnabled(provider)) result.add(provider);
             } catch (RuntimeException ignored) {
@@ -130,8 +141,7 @@ final class CoarseLocationClient {
     private Location bestLastKnown(List<String> providers) {
         Location best = null;
         List<String> candidates = new ArrayList<>(providers);
-        for (String provider : new String[]{LocationManager.NETWORK_PROVIDER,
-                LocationManager.GPS_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
+        for (String provider : providerNames()) {
             if (!candidates.contains(provider)) candidates.add(provider);
         }
         for (String provider : candidates) {
@@ -145,5 +155,10 @@ final class CoarseLocationClient {
             }
         }
         return best;
+    }
+
+    private static String[] providerNames() {
+        return new String[]{FUSED_PROVIDER, LocationManager.NETWORK_PROVIDER,
+                LocationManager.GPS_PROVIDER, LocationManager.PASSIVE_PROVIDER};
     }
 }

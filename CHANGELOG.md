@@ -14,6 +14,11 @@ versioning, and public Android `versionCode` values increase once per release.
 
 - Tapping a wallpaper thumbnail now opens its preview directly; the existing
   Preview button remains available.
+- Automatic sunrise/sunset now requests a reliable foreground GPS fix on older
+  head units, allows up to one minute for a cold fix, and exposes an immediate
+  cancel action while searching.
+- Location denial, cancellation, and timeout preserve the chosen schedule mode;
+  the visible Automatic/Manual selector no longer disagrees with saved state.
 - About now presents each GitHub contributor as one friendly profile, including
   a cached profile image and a direct profile link.
 - The creator's anonymous and GitHub-linked commit identities are merged into
@@ -26,6 +31,10 @@ versioning, and public Android `versionCode` values increase once per release.
   4 MB disk ceiling. Initials remain visible when an avatar is unavailable.
 - Preview navigation uses a stable visible-list snapshot and ignores late image
   callbacks after the user has moved to another wallpaper.
+- Recent on-device fixes are age-bounded: fixes under 24 hours can be accepted
+  immediately and fixes over seven days are never used as a timeout fallback.
+- Every acquired coordinate is rounded to 0.1 degrees before private storage;
+  precise input is discarded and background location is never requested.
 
 ## [1.6.0] - 2026-08-10
 

@@ -110,15 +110,15 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - One global display default for wallpapers without a custom choice.
 - Optional Day & Night roles with automatic or manual changeover.
 - Ambient-light scheduling on equipped devices, with local sunrise/sunset as a
-  privacy-preserving fallback from one-time approximate location.
+  privacy-preserving fallback from a one-time foreground fix that is immediately
+  rounded and kept only on-device.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
 - Friendly public GitHub contributor profiles with cached avatars, plus
   repository-level licence summaries.
 - Bounded network, disk, decoder, and memory use suitable for head units.
-- No account, analytics, advertising, precise/background location, or storage
-  permission.
+- No account, analytics, advertising, background location, or storage permission.
 
 ## How previews work
 
@@ -165,10 +165,12 @@ including animated GIFs.
 The same panel can assign a wallpaper to **Both**, **Day**, or **Night**. Turn
 the feature on from **Settings** after both periods have an eligible wallpaper.
 In **Automatic** mode Deckscape uses the device's ambient-light sensor when one
-exists. Otherwise it can request approximate location once and calculate local
-sunrise and sunset on the device; the rounded coordinate is never sent to a
-Deckscape server. Choose **Manual times** to avoid location entirely or set a
-fixed schedule.
+exists. Otherwise it requests one foreground location fix and calculates local
+sunrise and sunset on the device. Older or non-Google head units can require
+Android's precise GPS permission to obtain that fix, but Deckscape immediately
+rounds it to 0.1 degrees, discards the precise result, and never sends the saved
+area to a server. The one-minute search is cancellable. Choose **Manual times**
+to avoid location entirely or set a fixed schedule.
 
 Manual **Show now** choices are respected until the next normal slideshow
 interval. If removing or deleting a wallpaper empties either period, Day &

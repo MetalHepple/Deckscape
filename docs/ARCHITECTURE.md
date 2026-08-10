@@ -114,10 +114,19 @@ pool through an exclusion or delete automatically disables the feature.
 Automatic period detection prefers an ambient-light sensor. The sensor is
 registered only while the wallpaper is visible; `AmbientLightTracker` uses
 separate day/night thresholds plus settling and hysteresis windows to avoid
-rapid changes. Without a sensor, a foreground-only approximate location fix is
-rounded to 0.1 degrees and used by `DayPhaseResolver` for on-device solar
-calculations. Manual times are the permission-free fallback. No background
-location service, remote solar API, or wakeup alarm is used.
+rapid changes. Without a sensor, a foreground-only location fix is
+requested explicitly from Settings. Android 11 and older require fine foreground
+access because non-Google head units may expose GPS without a functional network
+provider; Android 12 and newer accepts the user's approximate choice. The result
+is immediately rounded to 0.1 degrees and used by `DayPhaseResolver` for
+on-device solar calculations.
+
+`CoarseLocationClient` checks fused, network, GPS, and passive providers, accepts
+only a fix from the last 24 hours immediately, and permits a fix up to seven days
+old solely as a timeout fallback. A fresh request runs for at most 60 seconds,
+can be cancelled from the visible Settings panel, and stops when the Activity
+leaves the foreground. Manual times are the permission-free fallback. No
+background location service, remote solar API, or wakeup alarm is used.
 
 Android owns activation. Deckscape opens
 `ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.
@@ -130,10 +139,11 @@ All mutating wallpaper actions flow through `WallpaperStore`,
 library-changed broadcast. The engine reloads its files and profiles from those
 stores rather than accepting file paths or settings from external intents.
 
-Approximate location is requested only after an explicit Settings action.
-Android backup and device-transfer extraction are disabled, so private
-wallpapers, coordinates, profiles, and cached metadata are not opted into cloud
-backup by the app.
+Location is requested only after an explicit Settings action and an in-app
+explanation. A timeout, denial, or cancellation preserves the selected schedule
+mode instead of silently changing the spinner. Android backup and device-transfer
+extraction are disabled, so private wallpapers, rounded coordinates, profiles,
+and cached metadata are not opted into cloud backup by the app.
 
 ## Application updates
 

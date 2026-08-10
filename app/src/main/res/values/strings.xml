@@ -13,7 +13,9 @@
     <string name="retry_update">Try again</string>
     <string name="checking_update">Checking…</string>
     <string name="downloading_update">Downloading…</string>
-    <string name="finding_location">Finding approximate location…</string>
+    <string name="cancel_location_search">Cancel location search</string>
+    <string name="location_permission_title">Allow a one-time GPS fix?</string>
+    <string name="location_permission_message">Automatic sunrise and sunset needs one foreground location fix. Older and non-Google head units may require Android\'s precise GPS permission, but Deckscape immediately rounds the result to an approximate area, stores it only on this device, and stops location access. It never requests background location.</string>
     <string name="day_night_status">%1$s  •  %2$s now\n%3$s / %4$s  •  %5$s</string>
     <plurals name="day_wallpapers">
         <item quantity="one">%1$d day wallpaper</item>

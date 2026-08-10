@@ -9,6 +9,10 @@ licences, and update status. Additional historic 1.4.0/1.5.0 screenshots are
 retained for interface provenance. None contain vehicle, account, map, or
 location information.
 
+The Settings screenshot exercises the no-light-sensor path with a synthetic
+emulator location fix. It shows only the locally saved date; no coordinate or
+real-world location is present in the image.
+
 The interface is Deckscape project material. Wallpaper previews visible inside
 the interface came from the public `fr0st-xyz/wallz` catalog and remain subject
 to their respective creator and source terms. They are shown only to document
