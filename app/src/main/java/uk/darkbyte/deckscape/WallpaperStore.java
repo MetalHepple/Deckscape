@@ -14,10 +14,14 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /** Owns Deckscape's private downloaded-wallpaper library and validated install pipeline. */
 final class WallpaperStore {
+    private static final String PREF_EXCLUDED_FILES = "excluded_slideshow_files";
+
     /** Receives throttled byte progress while a wallpaper is downloaded. */
     interface ProgressListener {
         void onProgress(long downloaded, long total);
@@ -33,7 +37,8 @@ final class WallpaperStore {
         return directory;
     }
 
-    static List<File> list(Context context) {
+    /** Returns every valid wallpaper downloaded into Deckscape's private library. */
+    static List<File> listDownloaded(Context context) {
         File[] files = directory(context).listFiles(file -> file.isFile()
                 && !file.getName().endsWith(".part")
                 && WallpaperRules.isSupportedName(file.getName()));
@@ -42,9 +47,17 @@ final class WallpaperStore {
         return new ArrayList<>(Arrays.asList(files));
     }
 
+    /** Returns only downloaded wallpapers currently included in timed rotation. */
+    static List<File> list(Context context) {
+        Set<String> excluded = excludedNames(context);
+        List<File> included = listDownloaded(context);
+        included.removeIf(file -> excluded.contains(file.getName()));
+        return included;
+    }
+
     static long totalBytes(Context context) {
         long total = 0;
-        for (File file : list(context)) total += file.length();
+        for (File file : listDownloaded(context)) total += file.length();
         return total;
     }
 
@@ -121,6 +134,36 @@ final class WallpaperStore {
         }
     }
 
+    /** Returns whether an installed wallpaper participates in the slideshow. */
+    static boolean isIncluded(Context context, File file) {
+        return file != null && file.isFile() && !excludedNames(context).contains(file.getName());
+    }
+
+    /** Adds a downloaded wallpaper to rotation without necessarily changing the current image. */
+    static File include(Context context, File file) throws IOException {
+        File installed = requireLibraryFile(context, file);
+        Set<String> excluded = excludedNames(context);
+        if (excluded.remove(installed.getName())) saveExcludedNames(context, excluded);
+        return ensureCurrentSelection(context);
+    }
+
+    /** Removes a wallpaper from rotation while retaining its downloaded file. */
+    static File removeFromSlideshow(Context context, File file) throws IOException {
+        File installed = requireLibraryFile(context, file);
+        Set<String> excluded = excludedNames(context);
+        if (excluded.add(installed.getName())) saveExcludedNames(context, excluded);
+        return ensureCurrentSelection(context);
+    }
+
+    /** Permanently deletes one validated library file and repairs slideshow selection state. */
+    static File delete(Context context, File file) throws IOException {
+        File installed = requireLibraryFile(context, file);
+        if (!installed.delete()) throw new IOException("Unable to delete the wallpaper");
+        Set<String> excluded = excludedNames(context);
+        if (excluded.remove(installed.getName())) saveExcludedNames(context, excluded);
+        return ensureCurrentSelection(context);
+    }
+
     /** Selects an installed file for the live-wallpaper engine. */
     static void select(Context context, File file) {
         context.getSharedPreferences(WallpaperEngineService.PREFS, Context.MODE_PRIVATE)
@@ -163,14 +206,68 @@ final class WallpaperStore {
                     break;
                 }
             }
-            if (revision) return withoutExtension(stored.substring(index + 14)).replace('_', ' ');
+            if (revision) return displayName(stored.substring(index + 14));
         }
-        return withoutExtension(stored).replace('_', ' ');
+        return displayName(stored);
+    }
+
+    /** Returns a catalog filename without its path, final extension, or underscore separators. */
+    static String displayName(String name) {
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        String filename = slash >= 0 ? name.substring(slash + 1) : name;
+        return withoutExtension(filename).replace('_', ' ');
     }
 
     private static String withoutExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    private static Set<String> excludedNames(Context context) {
+        Set<String> saved = context.getSharedPreferences(WallpaperEngineService.PREFS,
+                        Context.MODE_PRIVATE)
+                .getStringSet(PREF_EXCLUDED_FILES, null);
+        return saved == null ? new HashSet<>() : new HashSet<>(saved);
+    }
+
+    private static void saveExcludedNames(Context context, Set<String> names) {
+        context.getSharedPreferences(WallpaperEngineService.PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putStringSet(PREF_EXCLUDED_FILES, new HashSet<>(names))
+                .apply();
+    }
+
+    private static File ensureCurrentSelection(Context context) {
+        List<File> included = list(context);
+        String selected = context.getSharedPreferences(WallpaperEngineService.PREFS,
+                        Context.MODE_PRIVATE)
+                .getString(WallpaperEngineService.PREF_CURRENT_FILE, "");
+        for (File candidate : included) {
+            if (candidate.getName().equals(selected)) return candidate;
+        }
+        if (!included.isEmpty()) {
+            File fallback = included.get(0);
+            select(context, fallback);
+            return fallback;
+        }
+        context.getSharedPreferences(WallpaperEngineService.PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .remove(WallpaperEngineService.PREF_CURRENT_FILE)
+                .putLong(WallpaperEngineService.PREF_LAST_SWITCH, System.currentTimeMillis())
+                .apply();
+        return null;
+    }
+
+    private static File requireLibraryFile(Context context, File file) throws IOException {
+        if (file == null) throw new IOException("Wallpaper is unavailable");
+        File library = directory(context).getCanonicalFile();
+        File candidate = file.getCanonicalFile();
+        if (!library.equals(candidate.getParentFile())
+                || !candidate.isFile()
+                || !WallpaperRules.isSupportedName(candidate.getName())) {
+            throw new IOException("Wallpaper is outside Deckscape's library");
+        }
+        return candidate;
     }
 
     private static void validateImage(File file, String name) throws IOException {

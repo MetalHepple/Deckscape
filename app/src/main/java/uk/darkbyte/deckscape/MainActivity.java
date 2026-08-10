@@ -192,6 +192,11 @@ public final class MainActivity extends Activity {
         activeIndicator.setMinHeight(Ui.dp(this, 48));
         activeIndicator.setMinimumHeight(Ui.dp(this, 48));
         activeIndicator.setPadding(Ui.dp(this, 14), 0, Ui.dp(this, 14), 0);
+        activeIndicator.setFocusable(true);
+        activeIndicator.setOnClickListener(view -> {
+            if (isWallpaperActive()) showSlideshowLibrary();
+            else showActivationGuide();
+        });
         top.addView(activeIndicator, new LinearLayout.LayoutParams(
                 Ui.dp(this, 132), Ui.dp(this, 48)));
 
@@ -226,11 +231,8 @@ public final class MainActivity extends Activity {
         actionParams.leftMargin = Ui.dp(this, 8);
         top.addView(next, actionParams);
 
-        modeButton = Ui.button(this, "Set up", true);
-        modeButton.setOnClickListener(view -> {
-            if (isWallpaperActive()) showSlideshowLibrary();
-            else showActivationGuide();
-        });
+        modeButton = Ui.button(this, "Library", true);
+        modeButton.setOnClickListener(view -> showSlideshowLibrary());
         LinearLayout.LayoutParams activateParams = new LinearLayout.LayoutParams(
                 Ui.dp(this, 112), Ui.dp(this, 48));
         activateParams.leftMargin = Ui.dp(this, 8);
@@ -563,11 +565,18 @@ public final class MainActivity extends Activity {
             return;
         }
         RepositorySource source = activeSource;
-        setStatus("Preparing " + item.name + "…");
-        gridAdapter.setDownloadProgress(source, item, -1);
+        String displayName = WallpaperStore.displayName(item.name);
+        File existing = WallpaperStore.installedFile(this, source, item);
+        boolean addOnly = existing != null && !WallpaperStore.isIncluded(this, existing);
+        if (existing == null) {
+            setStatus("Preparing " + displayName + "…");
+            gridAdapter.setDownloadProgress(source, item, -1);
+        } else {
+            setStatus((addOnly ? "Adding " : "Showing ") + displayName + "…");
+        }
         io.execute(() -> {
             try {
-                File file = WallpaperStore.installedFile(this, source, item);
+                File file = existing;
                 if (file == null) {
                     runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
                     int[] lastPercent = {-1};
@@ -577,26 +586,30 @@ public final class MainActivity extends Activity {
                         lastPercent[0] = percent;
                         runOnUiThread(() -> {
                             gridAdapter.setDownloadProgress(source, item, percent);
-                            setStatus("Downloading " + item.name + " • " + percent + "%");
+                            setStatus("Downloading " + displayName + " • " + percent + "%");
                         });
                     });
                 }
-                WallpaperStore.select(this, file);
+                WallpaperStore.include(this, file);
+                if (!addOnly) WallpaperStore.select(this, file);
                 sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                         .setPackage(getPackageName()));
                 boolean active = isWallpaperActive();
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
                     gridAdapter.refreshLibraryState(active);
-                    if (active) {
-                        setStatus("Now showing " + item.name
-                                + ". Other downloads remain in the slideshow.");
+                    if (addOnly) {
+                        setStatus("Added " + displayName + " to the slideshow.");
+                        Toast.makeText(this, "Added to slideshow", Toast.LENGTH_SHORT).show();
+                    } else if (active) {
+                        setStatus("Now showing " + displayName
+                                + ". Other included wallpapers remain in the slideshow.");
                         Toast.makeText(this, "Now showing • slideshow unchanged",
                                 Toast.LENGTH_SHORT).show();
                     } else {
-                        setStatus("Added " + item.name
-                                + " to the slideshow. Tap Set up to enable Deckscape.");
-                        Toast.makeText(this, "Added to slideshow • tap Set up",
+                        setStatus("Added " + displayName
+                                + " to the slideshow. Tap Setup needed to enable Deckscape.");
+                        Toast.makeText(this, "Added to slideshow • setup still needed",
                                 Toast.LENGTH_SHORT).show();
                     }
                 });
@@ -638,7 +651,9 @@ public final class MainActivity extends Activity {
         activeIndicator.setTextColor(active ? Ui.CYAN : Ui.CORAL);
         activeIndicator.setBackground(Ui.rounded(active ? Ui.CYAN_DARK : Ui.SURFACE_HIGH,
                 Ui.dp(this, 12), active ? Ui.CYAN : Ui.CORAL, Ui.dp(this, 1)));
-        modeButton.setText(active ? "Slideshow" : "Set up");
+        activeIndicator.setContentDescription(active
+                ? "Deckscape is active. Open wallpaper library"
+                : "Deckscape setup is needed. Open setup guide");
         modeButton.setEnabled(true);
         if (gridAdapter != null) gridAdapter.refreshLibraryState(active);
     }
@@ -719,25 +734,18 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Shows every downloaded wallpaper that participates in automatic or manual rotation. */
+    /** Shows every downloaded wallpaper with independent slideshow and deletion controls. */
     private void showSlideshowLibrary() {
-        List<File> files = WallpaperStore.list(this);
-        File current = WallpaperStore.current(this, files);
-
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 18),
                 Ui.dp(this, 22), Ui.dp(this, 12));
 
-        panel.addView(Ui.title(this, "Slideshow wallpapers", 22),
+        panel.addView(Ui.title(this, "Wallpaper library", 22),
                 new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                         Ui.dp(this, 42)));
 
-        String summary = files.isEmpty()
-                ? "Download wallpapers to include them in the slideshow."
-                : "All " + files.size() + " downloaded wallpapers are included automatically. "
-                        + "Show now changes the current image without removing the others.";
-        TextView explanation = Ui.text(this, summary, 13, Ui.MUTED);
+        TextView explanation = Ui.text(this, "", 13, Ui.MUTED);
         explanation.setMaxLines(2);
         panel.addView(explanation, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
@@ -761,17 +769,69 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         slideshow.setEmptyView(empty);
 
+        SlideshowGridAdapter[] adapterHolder = new SlideshowGridAdapter[1];
         SlideshowGridAdapter adapter = new SlideshowGridAdapter(
-                this, previewCache, files, current, file -> {
-                    WallpaperStore.select(this, file);
-                    sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
-                            .setPackage(getPackageName()));
-                    gridAdapter.refreshLibraryState(isWallpaperActive());
+                this, previewCache, new SlideshowGridAdapter.Listener() {
+            @Override
+            public void onShowNow(File file) {
+                try {
+                    WallpaperStore.select(MainActivity.this, file);
+                    refreshWallpaperLibrary(adapterHolder[0], explanation);
                     setStatus("Now showing " + WallpaperStore.displayName(file)
-                            + ". Other downloaded wallpapers remain in the slideshow.");
-                    Toast.makeText(this, "Wallpaper changed • slideshow unchanged",
+                            + ". Other included wallpapers remain in the slideshow.");
+                    Toast.makeText(MainActivity.this, "Wallpaper changed • slideshow unchanged",
                             Toast.LENGTH_SHORT).show();
+                } catch (Exception exception) {
+                    showWallpaperLibraryError(exception);
+                }
+            }
+
+            @Override
+            public void onSetIncluded(File file, boolean included) {
+                try {
+                    if (included) WallpaperStore.include(MainActivity.this, file);
+                    else WallpaperStore.removeFromSlideshow(MainActivity.this, file);
+                    refreshWallpaperLibrary(adapterHolder[0], explanation);
+                    String name = WallpaperStore.displayName(file);
+                    int count = adapterHolder[0].includedCount();
+                    if (included) {
+                        setStatus("Added " + name + " to the slideshow.");
+                        Toast.makeText(MainActivity.this, "Added to slideshow",
+                                Toast.LENGTH_SHORT).show();
+                    } else if (count == 0) {
+                        setStatus("Removed " + name
+                                + ". The slideshow is empty; the download remains on device.");
+                        Toast.makeText(MainActivity.this, "Slideshow empty • file kept on device",
+                                Toast.LENGTH_LONG).show();
+                    } else {
+                        setStatus("Removed " + name
+                                + " from the slideshow; the download remains on device.");
+                        Toast.makeText(MainActivity.this, "Removed from slideshow • file kept",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                } catch (Exception exception) {
+                    showWallpaperLibraryError(exception);
+                }
+            }
+
+            @Override
+            public void onDelete(File file) {
+                confirmWallpaperDeletion(file, () -> {
+                    try {
+                        String name = WallpaperStore.displayName(file);
+                        WallpaperStore.delete(MainActivity.this, file);
+                        refreshWallpaperLibrary(adapterHolder[0], explanation);
+                        setStatus("Deleted " + name + " from this device.");
+                        Toast.makeText(MainActivity.this, "Deleted from device",
+                                Toast.LENGTH_SHORT).show();
+                    } catch (Exception exception) {
+                        showWallpaperLibraryError(exception);
+                    }
                 });
+            }
+        });
+        adapterHolder[0] = adapter;
+        updateSlideshowSummary(explanation, adapter);
         slideshow.setAdapter(adapter);
         panel.addView(content, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 360)));
@@ -797,6 +857,45 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation) {
+        sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                .setPackage(getPackageName()));
+        adapter.refresh();
+        updateSlideshowSummary(explanation, adapter);
+        gridAdapter.refreshLibraryState(isWallpaperActive());
+    }
+
+    private void updateSlideshowSummary(TextView explanation, SlideshowGridAdapter adapter) {
+        int downloaded = adapter.getCount();
+        int included = adapter.includedCount();
+        String summary = downloaded == 0
+                ? "Download a wallpaper to add it to this device and the slideshow."
+                : included + " of " + downloaded + " downloaded wallpaper"
+                + (downloaded == 1 ? " is" : "s are") + " in the slideshow. "
+                + "Remove keeps the file; Delete removes it from this device.";
+        explanation.setText(summary);
+    }
+
+    private void confirmWallpaperDeletion(File file, Runnable onConfirmed) {
+        AlertDialog confirmation = new AlertDialog.Builder(this)
+                .setTitle("Delete " + WallpaperStore.displayName(file) + "?")
+                .setMessage("This removes the downloaded wallpaper from this device and the "
+                        + "slideshow. You can download it again from its source.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Delete", (ignored, which) -> onConfirmed.run())
+                .create();
+        confirmation.show();
+        styleDialog(confirmation);
+        Button delete = confirmation.getButton(AlertDialog.BUTTON_POSITIVE);
+        if (delete != null) delete.setTextColor(Ui.CORAL);
+    }
+
+    private void showWallpaperLibraryError(Exception exception) {
+        String message = readableMessage(exception);
+        setStatus("Could not update wallpaper library: " + message);
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
     /** Opens a cached, bandwidth-saving preview without downloading or selecting the original. */
     private void showWallpaperPreview(CatalogItem item) {
         RepositorySource source = activeSource;
@@ -807,7 +906,8 @@ public final class MainActivity extends Activity {
         panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 18),
                 Ui.dp(this, 22), Ui.dp(this, 12));
 
-        TextView title = Ui.title(this, item.name, 20);
+        String displayName = WallpaperStore.displayName(item.name);
+        TextView title = Ui.title(this, displayName, 20);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         panel.addView(title, new LinearLayout.LayoutParams(
@@ -829,13 +929,13 @@ public final class MainActivity extends Activity {
         AnimatedGifView animation = null;
         if (item.isGif()) {
             animation = new AnimatedGifView(this);
-            animation.setContentDescription("Animated preview of " + item.name);
+            animation.setContentDescription("Animated preview of " + displayName);
             previewFrame.addView(animation, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         } else {
             image = new ImageView(this);
             image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            image.setContentDescription("Preview of " + item.name);
+            image.setContentDescription("Preview of " + displayName);
             previewFrame.addView(image, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
@@ -1211,7 +1311,7 @@ public final class MainActivity extends Activity {
 
         TextView warning = Ui.text(this,
                 "Android will ask you to approve installation. Updating may temporarily restore "
-                        + "a head unit's stock wallpaper; reopen Deckscape and tap Set up if needed.",
+                        + "a head unit's stock wallpaper; reopen Deckscape and tap Setup needed if required.",
                 13, Ui.CORAL);
         warning.setPadding(Ui.dp(this, 14), Ui.dp(this, 8),
                 Ui.dp(this, 14), Ui.dp(this, 8));

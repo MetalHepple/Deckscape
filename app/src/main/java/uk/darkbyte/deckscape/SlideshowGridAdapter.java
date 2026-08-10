@@ -14,33 +14,49 @@ import android.widget.TextView;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-/** Renders the downloaded wallpapers included in Deckscape's slideshow. */
+/** Renders every downloaded wallpaper with explicit rotation and deletion controls. */
 final class SlideshowGridAdapter extends BaseAdapter {
-    /** Receives requests to make an included wallpaper the currently displayed item. */
+    /** Receives wallpaper-library actions selected from a card. */
     interface Listener {
         void onShowNow(File file);
+
+        void onSetIncluded(File file, boolean included);
+
+        void onDelete(File file);
     }
 
     private final Context context;
     private final PreviewCache previews;
     private final Listener listener;
     private final List<File> files = new ArrayList<>();
+    private final Set<String> includedNames = new HashSet<>();
     private String currentName = "";
 
-    SlideshowGridAdapter(Context context, PreviewCache previews, List<File> included,
-                         File current, Listener listener) {
+    SlideshowGridAdapter(Context context, PreviewCache previews, Listener listener) {
         this.context = context;
         this.previews = previews;
         this.listener = listener;
-        files.addAll(included);
-        currentName = current == null ? "" : current.getName();
+        refresh();
     }
 
-    void setCurrent(File current) {
+    /** Reloads downloaded files, slideshow membership, and current selection from storage. */
+    void refresh() {
+        files.clear();
+        files.addAll(WallpaperStore.listDownloaded(context));
+        List<File> included = WallpaperStore.list(context);
+        includedNames.clear();
+        for (File file : included) includedNames.add(file.getName());
+        File current = WallpaperStore.current(context, included);
         currentName = current == null ? "" : current.getName();
         notifyDataSetChanged();
+    }
+
+    int includedCount() {
+        return includedNames.size();
     }
 
     @Override
@@ -61,23 +77,26 @@ final class SlideshowGridAdapter extends BaseAdapter {
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
         File file = getItem(position);
+        boolean included = includedNames.contains(file.getName());
         boolean current = file.getName().equals(currentName);
 
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Ui.dp(context, 6), Ui.dp(context, 6),
                 Ui.dp(context, 6), Ui.dp(context, 6));
-        card.setBackground(Ui.rounded(current ? Ui.CYAN_DARK : Ui.SURFACE,
-                Ui.dp(context, 14), current ? Ui.CYAN : Ui.GREEN,
+        int cardColor = current ? Ui.CYAN_DARK : included ? Ui.GREEN_DARK : Ui.SURFACE;
+        int borderColor = current ? Ui.CYAN : included ? Ui.GREEN : Ui.DIVIDER;
+        card.setBackground(Ui.rounded(cardColor, Ui.dp(context, 14), borderColor,
                 Ui.dp(context, current ? 3 : 1)));
         card.setContentDescription(WallpaperStore.displayName(file)
-                + (current ? ", now showing" : ", included in slideshow"));
+                + (current ? ", now showing" : included
+                ? ", included in slideshow" : ", downloaded, not in slideshow"));
 
         FrameLayout imageFrame = new FrameLayout(context);
         imageFrame.setBackground(Ui.rounded(Ui.BACKGROUND, Ui.dp(context, 10)));
         imageFrame.setClipToOutline(true);
         card.addView(imageFrame, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 108)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 110)));
 
         ImageView image = new ImageView(context);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -101,44 +120,75 @@ final class SlideshowGridAdapter extends BaseAdapter {
             }
         });
 
-        TextView badge = Ui.title(context, current ? "NOW SHOWING" : "IN SLIDESHOW", 10);
-        badge.setTextColor(current ? Ui.NAV : Color.rgb(5, 29, 21));
+        String badgeLabel = current ? "NOW SHOWING" : included ? "IN SLIDESHOW" : "ON DEVICE";
+        int badgeColor = current ? Ui.CYAN : included ? Ui.GREEN : Ui.SURFACE_HIGH;
+        TextView badge = Ui.title(context, badgeLabel, 9);
+        badge.setTextColor(current || included ? Ui.NAV : Ui.MUTED);
         badge.setGravity(Gravity.CENTER);
         badge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
-        badge.setBackground(Ui.rounded(current ? Ui.CYAN : Ui.GREEN, Ui.dp(context, 7)));
+        badge.setBackground(Ui.rounded(badgeColor, Ui.dp(context, 7),
+                current ? Ui.CYAN : included ? Ui.GREEN : Ui.DIVIDER, Ui.dp(context, 1)));
         FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
                 Gravity.TOP | Gravity.START);
         badgeParams.setMargins(Ui.dp(context, 7), Ui.dp(context, 7), 0, 0);
         imageFrame.addView(badge, badgeParams);
 
-        LinearLayout footer = new LinearLayout(context);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(Ui.dp(context, 4), Ui.dp(context, 3), 0, 0);
-        TextView title = Ui.title(context, WallpaperStore.displayName(file), 13);
+        TextView title = Ui.title(context, WallpaperStore.displayName(file), 12);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        footer.addView(title, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        title.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
+        title.setShadowLayer(3f, 0f, Ui.dp(context, 1), Color.BLACK);
+        title.setBackgroundColor(Color.argb(148, 7, 17, 27));
+        imageFrame.addView(title, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 28), Gravity.BOTTOM));
 
-        Button show = Ui.actionButton(context, current ? "Showing" : "Show now", current);
+        LinearLayout actions = new LinearLayout(context);
+        actions.setOrientation(LinearLayout.HORIZONTAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0, Ui.dp(context, 4), 0, 0);
+
+        Button show = compactButton(current ? "Showing" : "Show", current);
         show.setSingleLine(true);
-        show.setTextSize(11);
-        show.setPadding(Ui.dp(context, 5), 0, Ui.dp(context, 5), 0);
-        show.setEnabled(!current);
-        show.setOnClickListener(view -> {
-            setCurrent(file);
-            listener.onShowNow(file);
-        });
-        LinearLayout.LayoutParams showParams = new LinearLayout.LayoutParams(
-                Ui.dp(context, 78), Ui.dp(context, 40));
-        showParams.leftMargin = Ui.dp(context, 6);
-        footer.addView(show, showParams);
-        card.addView(footer, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 48)));
+        show.setEnabled(included && !current);
+        show.setOnClickListener(view -> listener.onShowNow(file));
+        actions.addView(show, weightedButtonParams(false));
+
+        Button membership = compactButton(included ? "Remove" : "Add", !included);
+        membership.setTextColor(included ? Ui.GREEN : Ui.CYAN);
+        membership.setOnClickListener(view -> listener.onSetIncluded(file, !included));
+        actions.addView(membership, weightedButtonParams(true));
+
+        Button delete = compactButton("Delete", false);
+        delete.setTextColor(Ui.CORAL);
+        delete.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(context, 10),
+                Ui.CORAL, Ui.dp(context, 1)));
+        delete.setOnClickListener(view -> listener.onDelete(file));
+        actions.addView(delete, weightedButtonParams(true));
+
+        card.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 46)));
 
         card.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 168)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 170)));
         return card;
+    }
+
+    private Button compactButton(String label, boolean accent) {
+        Button button = Ui.actionButton(context, label, accent);
+        button.setSingleLine(true);
+        button.setTextSize(10);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setPadding(Ui.dp(context, 4), 0, Ui.dp(context, 4), 0);
+        return button;
+    }
+
+    private LinearLayout.LayoutParams weightedButtonParams(boolean withMargin) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        if (withMargin) params.leftMargin = Ui.dp(context, 4);
+        return params;
     }
 }

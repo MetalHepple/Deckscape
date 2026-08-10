@@ -28,7 +28,7 @@ devices that support live wallpapers and allow APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.4.0.apk"><strong>Download Deckscape 1.4.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.5.0.apk"><strong>Download Deckscape 1.5.0 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -72,11 +72,11 @@ open Deckscape and activate its live wallpaper again.
   </tr>
   <tr>
     <td><img src="docs/images/deckscape-active.png" alt="Deckscape active GIF and slideshow states"></td>
-    <td><img src="docs/images/deckscape-slideshow.png" alt="Deckscape downloaded slideshow library"></td>
+    <td><img src="docs/images/deckscape-slideshow.png" alt="Deckscape wallpaper library controls"></td>
   </tr>
   <tr>
     <td align="center"><strong>Clear current and slideshow states</strong></td>
-    <td align="center"><strong>Every downloaded wallpaper in one place</strong></td>
+    <td align="center"><strong>Add, remove, show, or delete downloads</strong></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/images/deckscape-info.png" alt="Deckscape information and update status panel"></td>
@@ -98,7 +98,8 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - One-touch downloads with progress shown inside the selected card.
 - Separate **Preview** and **Download** controls, with previews cached on-device.
 - Animated GIFs play inside the in-app preview before installation.
-- Clear **In slideshow**, **Ready**, and **Now showing** wallpaper states.
+- Clear **On device**, **In slideshow**, **Ready**, and **Now showing** states.
+- Independent **Add**, **Remove**, and confirmed **Delete** library controls.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
@@ -125,15 +126,15 @@ See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
 
 ## Using the slideshow
 
-Every wallpaper you download is included in the slideshow automatically; there
-is no second activation step for individual images. **Show now** changes the
-image currently displayed without removing any of the other downloads from
-rotation.
+Every wallpaper you download is included in the slideshow automatically.
+**Show** changes the image currently displayed without removing any of the
+other included wallpapers. **Remove** takes an image out of rotation while
+keeping the download on the device; **Add** restores it without another
+download. **Delete** permanently removes the downloaded file after confirmation.
 
-When Deckscape is active, use **Slideshow** in the top bar to see the complete
-downloaded set and which image is currently showing. When it is inactive, the
-same control is labelled **Set up** and opens the one-time Android activation
-guide.
+Use **Library** in the top bar to see the complete downloaded set, manage its
+slideshow membership, and identify the current image. The adjacent status pill
+opens Deckscape's one-time activation guide when setup is needed.
 
 ## Default catalogs
 

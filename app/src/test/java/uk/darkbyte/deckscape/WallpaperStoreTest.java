@@ -18,4 +18,14 @@ public final class WallpaperStoreTest {
     public void displayNameFallsBackToPlainFilename() {
         assertEquals("local wallpaper", WallpaperStore.displayName(new File("local_wallpaper.png")));
     }
+
+    @Test
+    public void displayNameRemovesCatalogPathAndFinalExtension() {
+        assertEquals("Blue.Hour.v2", WallpaperStore.displayName("landscapes/Blue.Hour.v2.webp"));
+    }
+
+    @Test
+    public void displayNamePreservesANameWithoutExtension() {
+        assertEquals("Northern Lights", WallpaperStore.displayName("Northern_Lights"));
+    }
 }
