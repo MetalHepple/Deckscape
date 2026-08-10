@@ -9,6 +9,7 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.hardware.Sensor;
@@ -1642,7 +1643,7 @@ public final class MainActivity extends Activity {
 
         String message = AppMetadata.versionLabel() + "\n"
                 + "Landscape wallpapers for Android head units\n\n"
-                + "Created by Paul Hepple / MetalHepple and released under the MIT Licence.\n"
+                + "Created by Paul Hepple (@MetalHepple) and released under the MIT Licence.\n"
                 + "No accounts, advertising, analytics or tracking. Approximate location is used "
                 + "only on-device when you enable automatic Day & Night scheduling.";
         TextView copy = Ui.text(this, message, 13, Ui.MUTED);
@@ -1650,12 +1651,13 @@ public final class MainActivity extends Activity {
         panel.addView(copy, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 128)));
 
-        TextView contributors = Ui.text(this, contributorsSummary(aboutMetadata), 13, Ui.TEXT);
+        LinearLayout contributors = new LinearLayout(this);
+        contributors.setOrientation(LinearLayout.HORIZONTAL);
         contributors.setPadding(Ui.dp(this, 14), Ui.dp(this, 8),
                 Ui.dp(this, 14), Ui.dp(this, 8));
         contributors.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
                 Ui.DIVIDER, Ui.dp(this, 1)));
-        contributors.setLineSpacing(Ui.dp(this, 2), 1f);
+        renderContributors(contributors, aboutMetadata);
         panel.addView(contributors, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 76)));
 
@@ -1687,8 +1689,7 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         infoDialog = dialog;
         licences.setOnClickListener(view -> showLicences());
-        source.setOnClickListener(view -> openExternal(
-                "https://github.com/MetalHepple/Deckscape"));
+        source.setOnClickListener(view -> openExternal(AppMetadata.REPOSITORY_URL));
         support.setOnClickListener(view -> openExternal("https://ko-fi.com/metalhepple"));
         check.setOnClickListener(view -> {
             if (updateState != null && updateState.release != null) {
@@ -1710,27 +1711,146 @@ public final class MainActivity extends Activity {
             RepositoryMetadata loaded = metadataClient.load(new ArrayList<>(sources));
             runOnUiThread(() -> {
                 aboutMetadata = loaded;
-                if (dialog.isShowing()) contributors.setText(contributorsSummary(loaded));
+                if (dialog.isShowing()) {
+                    renderContributors(contributors, loaded);
+                    loadContributorAvatars(contributors, loaded, dialog);
+                }
             });
         });
     }
 
-    private String contributorsSummary(RepositoryMetadata metadata) {
-        if (metadata == null) return "CONTRIBUTORS  •  Loading from GitHub…";
-        if (metadata.contributors.isEmpty()) {
-            return "CONTRIBUTORS  •  MetalHepple\nGitHub contributor data is unavailable offline.";
+    /** Rebuilds the contributor strip with friendly, deduplicated profile chips. */
+    private void renderContributors(LinearLayout panel, RepositoryMetadata metadata) {
+        panel.removeAllViews();
+        TextView heading = Ui.title(this, metadata != null && metadata.stale
+                ? "CONTRIBUTORS\nSAVED OFFLINE" : "CONTRIBUTORS", 10);
+        heading.setTextColor(metadata != null && metadata.stale ? Ui.MUTED : Ui.CYAN);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(heading, new LinearLayout.LayoutParams(
+                Ui.dp(this, 138), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(true);
+        LinearLayout people = new LinearLayout(this);
+        people.setOrientation(LinearLayout.HORIZONTAL);
+        people.setGravity(Gravity.CENTER_VERTICAL);
+        scroll.addView(people, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        if (metadata == null) {
+            TextView loading = Ui.text(this, "Loading from GitHub…", 13, Ui.MUTED);
+            loading.setGravity(Gravity.CENTER_VERTICAL);
+            people.addView(loading, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            return;
         }
-        StringBuilder value = new StringBuilder("CONTRIBUTORS  •  ");
-        for (int index = 0; index < metadata.contributors.size(); index++) {
-            if (index > 0) value.append("  ·  ");
-            RepositoryMetadata.Contributor contributor = metadata.contributors.get(index);
-            value.append(contributor.login);
-            if (contributor.contributions > 0) {
-                value.append(" (").append(contributor.contributions).append(')');
+
+        List<RepositoryMetadata.Contributor> values = contributorProfiles(metadata);
+        for (RepositoryMetadata.Contributor contributor : values) {
+            people.addView(contributorChip(contributor));
+        }
+    }
+
+    private View contributorChip(RepositoryMetadata.Contributor contributor) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setPadding(Ui.dp(this, 7), Ui.dp(this, 4),
+                Ui.dp(this, 12), Ui.dp(this, 4));
+        chip.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 24),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+
+        FrameLayout avatar = new FrameLayout(this);
+        TextView initial = Ui.title(this, contributor.displayName.substring(0, 1)
+                .toUpperCase(Locale.ROOT), 13);
+        initial.setGravity(Gravity.CENTER);
+        initial.setTextColor(Ui.NAV);
+        initial.setBackground(contributorAvatarBackground(Ui.CYAN));
+        avatar.addView(initial, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackground(contributorAvatarBackground(Ui.SURFACE_HIGH));
+        image.setClipToOutline(true);
+        image.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
+        image.setVisibility(View.INVISIBLE);
+        image.setTag(contributorAvatarTag(contributor));
+        avatar.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 38), Ui.dp(this, 38));
+        chip.addView(avatar, avatarParams);
+
+        TextView label = Ui.text(this, contributor.displayLabel(), 13, Ui.TEXT);
+        label.setSingleLine(true);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        labelParams.leftMargin = Ui.dp(this, 9);
+        chip.addView(label, labelParams);
+
+        LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 50));
+        chipParams.rightMargin = Ui.dp(this, 8);
+        chip.setLayoutParams(chipParams);
+        if (!contributor.pageUrl.isEmpty()) {
+            chip.setClickable(true);
+            chip.setFocusable(true);
+            chip.setContentDescription("Open GitHub profile for " + contributor.displayLabel());
+            chip.setOnClickListener(view -> openExternal(contributor.pageUrl));
+        }
+        return chip;
+    }
+
+    private android.graphics.drawable.GradientDrawable contributorAvatarBackground(int color) {
+        android.graphics.drawable.GradientDrawable background =
+                new android.graphics.drawable.GradientDrawable();
+        background.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        background.setColor(color);
+        return background;
+    }
+
+    private static String contributorAvatarTag(RepositoryMetadata.Contributor contributor) {
+        return "contributor-avatar:" + contributor.login + ":" + contributor.pageUrl;
+    }
+
+    private static List<RepositoryMetadata.Contributor> contributorProfiles(
+            RepositoryMetadata metadata) {
+        List<RepositoryMetadata.Contributor> contributors =
+                new ArrayList<>(metadata.contributors);
+        if (contributors.isEmpty()) {
+            contributors.add(new RepositoryMetadata.Contributor(AppMetadata.CREATOR_NAME,
+                    AppMetadata.CREATOR_LOGIN, AppMetadata.CREATOR_URL,
+                    AppMetadata.CREATOR_AVATAR_URL));
+        }
+        return contributors;
+    }
+
+    /** Loads bounded profile images after labels are visible, retaining initials offline. */
+    private void loadContributorAvatars(LinearLayout panel, RepositoryMetadata metadata,
+                                        AlertDialog dialog) {
+        List<RepositoryMetadata.Contributor> contributors = contributorProfiles(metadata);
+        io.execute(() -> {
+            List<Bitmap> avatars = new ArrayList<>();
+            for (RepositoryMetadata.Contributor contributor : contributors) {
+                avatars.add(metadataClient.loadAvatar(contributor));
             }
-        }
-        if (metadata.stale) value.append("\nShowing saved GitHub metadata while offline.");
-        return value.toString();
+            runOnUiThread(() -> {
+                if (!dialog.isShowing()) return;
+                for (int index = 0; index < contributors.size(); index++) {
+                    Bitmap avatar = avatars.get(index);
+                    if (avatar == null) continue;
+                    ImageView target = panel.findViewWithTag(
+                            contributorAvatarTag(contributors.get(index)));
+                    if (target != null) {
+                        target.setImageBitmap(avatar);
+                        target.setVisibility(View.VISIBLE);
+                    }
+                }
+            });
+        });
     }
 
     /** Displays bundled legal text plus cached repository-level licence declarations. */

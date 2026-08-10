@@ -23,16 +23,24 @@ final class RepositoryMetadata {
         return (owner + "/" + repository).toLowerCase(java.util.Locale.ROOT);
     }
 
-    /** A public GitHub contributor without avatar or private account information. */
+    /** Public GitHub contributor identity used by the About panel. */
     static final class Contributor {
+        final String displayName;
         final String login;
         final String pageUrl;
-        final int contributions;
+        final String avatarUrl;
 
-        Contributor(String login, String pageUrl, int contributions) {
+        Contributor(String displayName, String login, String pageUrl, String avatarUrl) {
+            this.displayName = displayName;
             this.login = login;
             this.pageUrl = pageUrl;
-            this.contributions = contributions;
+            this.avatarUrl = avatarUrl;
+        }
+
+        /** Returns a friendly identity without exposing GitHub's commit count. */
+        String displayLabel() {
+            if (login.isEmpty() || displayName.equalsIgnoreCase(login)) return displayName;
+            return displayName + " (@" + login + ")";
         }
     }
 

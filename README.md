@@ -112,7 +112,8 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
-- Cached public GitHub contributors and repository-level licence summaries.
+- Friendly public GitHub contributor profiles with cached avatars, plus
+  repository-level licence summaries.
 - Bounded network, disk, decoder, and memory use suitable for head units.
 - No account, analytics, advertising, precise/background location, or storage
   permission.

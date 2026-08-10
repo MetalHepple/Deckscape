@@ -7,6 +7,8 @@ The app connects directly over HTTPS to:
 
 - `api.github.com` to read public repository metadata, directory listings,
   Deckscape contributors, and repository-level licence summaries;
+- `avatars.githubusercontent.com` to fetch the public profile images shown for
+  contributors in About;
 - `raw.githubusercontent.com` to fetch user-selected wallpapers and fallback
   previews;
 - `github.com` and GitHub's release-asset hosts to check for and download
@@ -16,10 +18,11 @@ The app connects directly over HTTPS to:
 Repository choices, catalog responses, generated previews, display profiles,
 day/night assignments, settings, and downloaded wallpapers remain in the
 app's private storage on the Android device. Contributor metadata is cached for
-24 hours and source-licence metadata for seven days, with a stale offline
-fallback. Android cloud backup and device-transfer backup are disabled for the
-application. Removing the app removes this local data under normal Android
-package-management behaviour.
+24 hours. Contributor profile images are cached for seven days in a bounded
+4 MB cache, and source-licence metadata is cached for seven days, all with an
+offline fallback. Android cloud backup and device-transfer backup are disabled
+for the application. Removing the app removes this local data under normal
+Android package-management behaviour.
 
 GitHub and, while Data saver is enabled, wsrv.nl receive ordinary network
 metadata such as the requesting IP address and user agent. The raw GitHub image

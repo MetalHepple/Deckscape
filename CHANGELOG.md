@@ -3,6 +3,21 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [Unreleased]
+
+### Changed
+
+- About now presents each GitHub contributor as one friendly profile, including
+  a cached profile image and a direct profile link.
+- The creator's anonymous and GitHub-linked commit identities are merged into
+  `Paul Hepple (@MetalHepple)` and raw commit counts are no longer displayed.
+
+### Security and reliability
+
+- Contributor avatars are restricted to GitHub's numeric avatar endpoint,
+  capped before decoding, cached privately for offline use, and pruned within a
+  4 MB disk ceiling. Initials remain visible when an avatar is unavailable.
+
 ## [1.6.0] - 2026-08-10
 
 ### Added

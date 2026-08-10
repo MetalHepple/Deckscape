@@ -53,8 +53,12 @@ renamed into the private library.
 
 `GitHubMetadataClient` separately loads public contributor and repository-level
 licence data for About. Requests remain under `api.github.com`, enforce a
-512 KB response cap, filter bot contributors, and use independent cache
-freshness windows. Wallpaper rendering never depends on this metadata.
+512 KB response cap, filter bot contributors, merge the creator's linked and
+anonymous commit identities, and use independent cache freshness windows.
+Public profile images are accepted only from GitHub's numeric
+`avatars.githubusercontent.com/u/<id>` endpoint, capped at 512 KB and 1,024
+pixels per axis before bounded downsampling for display. Wallpaper rendering
+never depends on this metadata.
 
 ## Caches
 
@@ -68,6 +72,8 @@ freshness windows. Wallpaper rendering never depends on this metadata.
   library-management action.
 - Contributor metadata: app cache directory, 24-hour freshness and stale
   offline fallback.
+- Contributor profile images: app cache directory, seven-day freshness, 4 MB
+  ceiling pruned to 3 MB, with an initial-letter fallback.
 - Source-licence metadata: app cache directory, seven-day freshness and stale
   offline fallback.
 
