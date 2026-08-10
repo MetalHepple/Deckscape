@@ -3,6 +3,8 @@
     <string name="app_name">Deckscape</string>
     <string name="wallpaper_description">A landscape live-wallpaper gallery backed by user-selected GitHub repositories.</string>
     <string name="no_preview">NO PREVIEW</string>
+    <string name="loading_preview">LOADING PREVIEW</string>
+    <string name="preview_position">%1$d / %2$d</string>
     <string name="too_large">Too large</string>
     <string name="info">About</string>
     <string name="update_available">Update</string>

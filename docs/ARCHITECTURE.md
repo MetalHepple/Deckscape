@@ -34,6 +34,13 @@ representative child image for each category card. The full wallpaper is still
 not downloaded merely to show the category: it follows the same bounded preview
 pipeline as an ordinary visible wallpaper card.
 
+Opening a wallpaper creates a `PreviewSequence` snapshot from the current
+folder or filtered results, omitting directories. `WallpaperPreviewDialog`
+keeps navigation within that snapshot and advances a request generation on
+every move, so a slower callback from the previous image cannot replace the
+currently selected preview. GIF animation is cleared immediately on navigation
+or dismissal.
+
 ## Trust boundaries
 
 `RepositorySource` validates GitHub owner, repository, branch, and path input.

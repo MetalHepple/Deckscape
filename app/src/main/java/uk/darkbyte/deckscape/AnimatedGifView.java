@@ -28,6 +28,13 @@ final class AnimatedGifView extends View {
         invalidate();
     }
 
+    /** Stops animation immediately and releases this view's reference to the decoder. */
+    void clearMovie() {
+        movie = null;
+        startedAt = 0;
+        invalidate();
+    }
+
     @Override
     protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);

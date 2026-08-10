@@ -117,6 +117,11 @@ final class WallpaperGridAdapter extends BaseAdapter {
         return getItem(position).path.hashCode();
     }
 
+    /** Returns a stable snapshot so a preview dialog follows the current search results. */
+    List<CatalogItem> visibleItemsSnapshot() {
+        return new ArrayList<>(visibleItems);
+    }
+
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
         CatalogItem item = getItem(position);
@@ -214,6 +219,10 @@ final class WallpaperGridAdapter extends BaseAdapter {
         FrameLayout imageFrame = new FrameLayout(context);
         imageFrame.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(context, 10)));
         imageFrame.setClipToOutline(true);
+        imageFrame.setClickable(true);
+        imageFrame.setFocusable(true);
+        imageFrame.setContentDescription("Preview " + WallpaperStore.displayName(item.name));
+        imageFrame.setOnClickListener(view -> listener.onPreview(item));
         card.addView(imageFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 122)));
 

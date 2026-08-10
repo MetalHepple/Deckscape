@@ -100,7 +100,9 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Image-backed folder categories plus an optional recursive **All wallpapers** view.
 - JPEG, PNG, WebP, and animated GIF wallpapers.
 - One-touch downloads with progress shown inside the selected card.
-- Separate **Preview** and **Download** controls, with previews cached on-device.
+- Tap a wallpaper image or its **Preview** control to open a cached preview,
+  then browse the current folder or search results with large previous/next
+  controls.
 - Animated GIFs play inside the in-app preview before installation.
 - Clear **On device**, **In slideshow**, **Ready**, and **Now showing** states.
 - Independent **Add**, **Remove**, and confirmed **Delete** library controls.
@@ -133,6 +135,9 @@ saver can be disabled and the preview cache cleared from **Settings**.
 Opening an animated GIF preview fetches the validated original GIF within the
 12 MB animation limit and stores it in the same bounded temporary cache. It is
 not added to the slideshow unless **Download** is selected.
+
+Previous and next navigation follows a snapshot of the currently visible
+wallpapers, including the active search filter, and skips category folders.
 
 See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
 

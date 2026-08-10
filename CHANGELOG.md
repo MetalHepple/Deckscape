@@ -5,8 +5,15 @@ versioning, and public Android `versionCode` values increase once per release.
 
 ## [Unreleased]
 
+### Added
+
+- Large previous and next controls turn Preview into a gallery that follows the
+  current folder or filtered search results.
+
 ### Changed
 
+- Tapping a wallpaper thumbnail now opens its preview directly; the existing
+  Preview button remains available.
 - About now presents each GitHub contributor as one friendly profile, including
   a cached profile image and a direct profile link.
 - The creator's anonymous and GitHub-linked commit identities are merged into
@@ -17,6 +24,8 @@ versioning, and public Android `versionCode` values increase once per release.
 - Contributor avatars are restricted to GitHub's numeric avatar endpoint,
   capped before decoding, cached privately for offline use, and pruned within a
   4 MB disk ceiling. Initials remain visible when an avatar is unavailable.
+- Preview navigation uses a stable visible-list snapshot and ignores late image
+  callbacks after the user has moved to another wallpaper.
 
 ## [1.6.0] - 2026-08-10
 
