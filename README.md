@@ -30,7 +30,7 @@ devices that support live wallpapers and allow APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.0.apk"><strong>Download Deckscape 1.7.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.1.apk"><strong>Download Deckscape 1.7.1 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -57,9 +57,14 @@ package-installer screens.
 
 Before offering the install, Deckscape verifies the release asset's SHA-256,
 package name, version, and signing certificate. Android may require Deckscape
-to be allowed as an installation source the first time. Some head units revert
-to their stock wallpaper while an app update is installed; if that happens,
-open Deckscape and activate its live wallpaper again.
+to be allowed as an installation source the first time. Deckscape hands the
+verified APK directly to Android's package installer so vendor head units that
+do not implement the standard per-app source-settings screen can still apply
+their own installation policy. If a device blocks that installer too, use the
+**Release page** action and install the APK through its browser or file manager.
+Some head units revert to their stock wallpaper while an app update is
+installed; if that happens, open Deckscape and activate its live wallpaper
+again.
 
 ## Screenshots
 

@@ -3,6 +3,19 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [1.7.1] - 2026-08-12
+
+### Fixed
+
+- Update installation no longer redirects first to Android's per-app
+  unknown-source settings screen. Some vendor head units resolve that standard
+  intent to an OEM settings page which immediately reports that the feature is
+  unsupported.
+- Verified update APKs are now handed directly to Android's user-confirmed
+  package installer so each head unit can apply its own installation policy.
+  If no installer can be launched, Deckscape keeps the update dialog available
+  and directs the user to the release page for a browser or file-manager install.
+
 ## [1.7.0] - 2026-08-12
 
 ### Added
@@ -209,6 +222,7 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
+[1.7.1]: https://github.com/MetalHepple/Deckscape/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/MetalHepple/Deckscape/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/MetalHepple/Deckscape/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/MetalHepple/Deckscape/compare/v1.4.0...v1.5.0

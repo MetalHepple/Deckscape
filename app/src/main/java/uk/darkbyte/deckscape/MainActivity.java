@@ -87,7 +87,6 @@ public final class MainActivity extends Activity {
     private String currentPath = "";
     private boolean allMode;
     private boolean activationGuideShown;
-    private boolean pendingUpdateInstall;
     private int requestGeneration;
 
     private LinearLayout categoryStrip;
@@ -146,16 +145,6 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateActiveState();
-        if (pendingUpdateInstall) {
-            if (UpdateInstaller.hasInstallPermission(this)) {
-                pendingUpdateInstall = false;
-                launchVerifiedUpdate();
-            } else {
-                pendingUpdateInstall = false;
-                Toast.makeText(this, "Install permission was not enabled.",
-                        Toast.LENGTH_LONG).show();
-            }
-        }
         if (!activationGuideShown && !isWallpaperActive()) {
             activationGuideShown = true;
             modeButton.post(this::showActivationGuide);
@@ -2279,27 +2268,17 @@ public final class MainActivity extends Activity {
 
     private void beginUpdateInstall() {
         if (updateState == null || !updateState.canInstall()) return;
-        if (!UpdateInstaller.hasInstallPermission(this)) {
-            pendingUpdateInstall = true;
-            try {
-                UpdateInstaller.requestInstallPermission(this);
-            } catch (Exception exception) {
-                pendingUpdateInstall = false;
-                Toast.makeText(this, "Android's install-source settings are unavailable.",
-                        Toast.LENGTH_LONG).show();
-            }
-            return;
-        }
         launchVerifiedUpdate();
     }
 
     private void launchVerifiedUpdate() {
         if (updateState == null || !updateState.canInstall()) return;
         try {
-            if (updateDialog != null) updateDialog.dismiss();
             UpdateInstaller.install(this, updateState.file);
+            if (updateDialog != null) updateDialog.dismiss();
         } catch (Exception exception) {
-            Toast.makeText(this, "Android's package installer is unavailable.",
+            Toast.makeText(this, "Android blocked the package installer. Use Release page "
+                            + "to download and install this update manually.",
                     Toast.LENGTH_LONG).show();
         }
     }
