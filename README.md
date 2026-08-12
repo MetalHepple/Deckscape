@@ -283,6 +283,12 @@ docs/         Architecture, source-format documentation, and README images
 Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), and
 run the complete verification command before opening a pull request.
 
+## Support Deckscape
+
+Deckscape is free and open source. If you would like to support its development,
+you can [buy me a coffee on Ko-fi](https://ko-fi.com/metalhepple). Donations are
+entirely optional and do not unlock additional features.
+
 ## License
 
 Deckscape source code and original project-specific brand assets are available
