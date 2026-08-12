@@ -631,65 +631,108 @@ public final class MainActivity extends Activity {
             loadDirectory(activeSource.relativePath(item.path));
             return;
         }
+        RepositorySource source = activeSource;
+        if (WallpaperStore.installedFile(this, source, item) == null) {
+            getWallpaper(source, item, null);
+        } else {
+            setWallpaper(source, item, null);
+        }
+    }
+
+    /** Downloads an original into the local library without selecting or rotating it. */
+    private void getWallpaper(RepositorySource source, CatalogItem item,
+                              WallpaperPreviewDialog.ActionCallback callback) {
         if (!WallpaperRules.canInstall(item)) {
             Toast.makeText(this, "This file exceeds Deckscape's safe size limit.",
                     Toast.LENGTH_LONG).show();
+            if (callback != null) callback.onComplete(false);
             return;
         }
-        RepositorySource source = activeSource;
         String displayName = WallpaperStore.displayName(item.name);
         File existing = WallpaperStore.installedFile(this, source, item);
-        boolean addOnly = existing != null && !WallpaperStore.isIncluded(this, existing);
-        if (existing == null) {
-            setStatus("Preparing " + displayName + "…");
-            gridAdapter.setDownloadProgress(source, item, -1);
-        } else {
-            setStatus((addOnly ? "Adding " : "Showing ") + displayName + "…");
+        if (existing != null) {
+            if (callback != null) callback.onComplete(true);
+            return;
         }
+        setStatus("Preparing " + displayName + "…");
+        gridAdapter.setDownloadProgress(source, item, -1);
         io.execute(() -> {
             try {
-                File file = existing;
-                if (file == null) {
-                    runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
-                    int[] lastPercent = {-1};
-                    file = WallpaperStore.install(this, source, item, (downloaded, total) -> {
-                        int percent = total > 0 ? (int) Math.min(100, downloaded * 100 / total) : 0;
-                        if (percent == lastPercent[0]) return;
-                        lastPercent[0] = percent;
-                        runOnUiThread(() -> {
-                            gridAdapter.setDownloadProgress(source, item, percent);
-                            setStatus("Downloading " + displayName + " • " + percent + "%");
-                        });
+                runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
+                int[] lastPercent = {-1};
+                File file = WallpaperStore.install(this, source, item, (downloaded, total) -> {
+                    int percent = total > 0
+                            ? (int) Math.min(100, downloaded * 100 / total) : 0;
+                    if (percent == lastPercent[0]) return;
+                    lastPercent[0] = percent;
+                    runOnUiThread(() -> {
+                        gridAdapter.setDownloadProgress(source, item, percent);
+                        setStatus("Getting " + displayName + " • " + percent + "%");
+                        if (callback != null) callback.onProgress(percent);
                     });
-                }
-                WallpaperStore.include(this, file);
-                if (!addOnly) WallpaperStore.select(this, file);
+                });
+                WallpaperStore.removeFromSlideshow(this, file);
                 sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                         .setPackage(getPackageName()));
-                boolean active = isWallpaperActive();
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
-                    gridAdapter.refreshLibraryState(active);
-                    if (addOnly) {
-                        setStatus("Added " + displayName + " to the slideshow.");
-                        Toast.makeText(this, "Added to slideshow", Toast.LENGTH_SHORT).show();
-                    } else if (active) {
-                        setStatus("Now showing " + displayName
-                                + ". Other included wallpapers remain in the slideshow.");
-                        Toast.makeText(this, "Now showing • slideshow unchanged",
-                                Toast.LENGTH_SHORT).show();
-                    } else {
-                        setStatus("Added " + displayName
-                                + " to the slideshow. Tap Setup needed to enable Deckscape.");
-                        Toast.makeText(this, "Added to slideshow • setup still needed",
-                                Toast.LENGTH_SHORT).show();
-                    }
+                    gridAdapter.refreshLibraryState(isWallpaperActive());
+                    setStatus("Saved " + displayName
+                            + " to Library. Wallpaper and slideshow unchanged.");
+                    Toast.makeText(this, "Saved to Library • wallpaper unchanged",
+                            Toast.LENGTH_SHORT).show();
+                    if (callback != null) callback.onComplete(true);
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
-                    setStatus("Could not apply wallpaper: " + readableMessage(exception));
+                    setStatus("Could not get wallpaper: " + readableMessage(exception));
                     Toast.makeText(this, readableMessage(exception), Toast.LENGTH_LONG).show();
+                    if (callback != null) callback.onComplete(false);
+                });
+            }
+        });
+    }
+
+    /** Includes an on-device original in the slideshow and makes it current. */
+    private void setWallpaper(RepositorySource source, CatalogItem item,
+                              WallpaperPreviewDialog.ActionCallback callback) {
+        String displayName = WallpaperStore.displayName(item.name);
+        File file = WallpaperStore.installedFile(this, source, item);
+        if (file == null) {
+            Toast.makeText(this, "Choose Get before setting this wallpaper.",
+                    Toast.LENGTH_SHORT).show();
+            if (callback != null) callback.onComplete(false);
+            return;
+        }
+        setStatus("Setting " + displayName + "…");
+        io.execute(() -> {
+            try {
+                WallpaperStore.include(this, file);
+                WallpaperStore.select(this, file);
+                sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                        .setPackage(getPackageName()));
+                runOnUiThread(() -> {
+                    boolean active = isWallpaperActive();
+                    gridAdapter.refreshLibraryState(active);
+                    if (active) {
+                        setStatus("Now showing " + displayName
+                                + ". Other included wallpapers remain in the slideshow.");
+                        Toast.makeText(this, "Now showing • added to slideshow",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        setStatus("Selected " + displayName
+                                + ". Tap Setup needed to enable Deckscape.");
+                        Toast.makeText(this, "Selected • setup still needed",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                    if (callback != null) callback.onComplete(true);
+                });
+            } catch (Exception exception) {
+                runOnUiThread(() -> {
+                    setStatus("Could not set wallpaper: " + readableMessage(exception));
+                    Toast.makeText(this, readableMessage(exception), Toast.LENGTH_LONG).show();
+                    if (callback != null) callback.onComplete(false);
                 });
             }
         });
@@ -820,7 +863,22 @@ public final class MainActivity extends Activity {
         TextView explanation = Ui.text(this, "", 13, Ui.MUTED);
         explanation.setMaxLines(2);
         panel.addView(explanation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 50)));
+
+        LinearLayout groups = new LinearLayout(this);
+        groups.setOrientation(LinearLayout.HORIZONTAL);
+        Button allGroup = Ui.button(this, "All", false);
+        Button dayGroup = Ui.button(this, "Day", false);
+        Button nightGroup = Ui.button(this, "Night", false);
+        Button[] groupButtons = {allGroup, dayGroup, nightGroup};
+        for (int index = 0; index < groupButtons.length; index++) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0, Ui.dp(this, 42), 1f);
+            if (index > 0) params.leftMargin = Ui.dp(this, 8);
+            groups.addView(groupButtons[index], params);
+        }
+        panel.addView(groups, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 46)));
 
         FrameLayout content = new FrameLayout(this);
         GridView slideshow = new GridView(this);
@@ -842,16 +900,18 @@ public final class MainActivity extends Activity {
         slideshow.setEmptyView(empty);
 
         SlideshowGridAdapter[] adapterHolder = new SlideshowGridAdapter[1];
+        Runnable[] refreshHolder = new Runnable[1];
         SlideshowGridAdapter adapter = new SlideshowGridAdapter(
                 this, previewCache, new SlideshowGridAdapter.Listener() {
             @Override
-            public void onShowNow(File file) {
+            public void onSet(File file) {
                 try {
+                    WallpaperStore.include(MainActivity.this, file);
                     WallpaperStore.select(MainActivity.this, file);
-                    refreshWallpaperLibrary(adapterHolder[0], explanation);
+                    refreshHolder[0].run();
                     setStatus("Now showing " + WallpaperStore.displayName(file)
-                            + ". Other included wallpapers remain in the slideshow.");
-                    Toast.makeText(MainActivity.this, "Wallpaper changed • slideshow unchanged",
+                            + ". It is included in the slideshow.");
+                    Toast.makeText(MainActivity.this, "Now showing • added to slideshow",
                             Toast.LENGTH_SHORT).show();
                 } catch (Exception exception) {
                     showWallpaperLibraryError(exception);
@@ -864,7 +924,7 @@ public final class MainActivity extends Activity {
                     if (included) WallpaperStore.include(MainActivity.this, file);
                     else WallpaperStore.removeFromSlideshow(MainActivity.this, file);
                     boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
-                    refreshWallpaperLibrary(adapterHolder[0], explanation);
+                    refreshHolder[0].run();
                     String name = WallpaperStore.displayName(file);
                     int count = adapterHolder[0].includedCount();
                     if (included) {
@@ -890,15 +950,32 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onOptions(File file) {
-                showWallpaperOptions(file,
-                        () -> refreshWallpaperLibrary(adapterHolder[0], explanation));
+                showWallpaperOptions(file, refreshHolder[0]);
             }
         });
         adapterHolder[0] = adapter;
+        refreshHolder[0] = () -> refreshWallpaperLibrary(adapterHolder[0], explanation,
+                allGroup, dayGroup, nightGroup, empty);
+        allGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.ALL);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
+        dayGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.DAY);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
+        nightGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.NIGHT);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
         updateSlideshowSummary(explanation, adapter);
+        updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
         slideshow.setAdapter(adapter);
         panel.addView(content, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 360)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 350)));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
@@ -921,23 +998,56 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation) {
+    private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation,
+                                         Button allGroup, Button dayGroup, Button nightGroup,
+                                         TextView empty) {
         sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                 .setPackage(getPackageName()));
         adapter.refresh();
         updateSlideshowSummary(explanation, adapter);
+        updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
         gridAdapter.refreshLibraryState(isWallpaperActive());
     }
 
     private void updateSlideshowSummary(TextView explanation, SlideshowGridAdapter adapter) {
-        int downloaded = adapter.getCount();
+        int downloaded = adapter.downloadedCount();
         int included = adapter.includedCount();
         String summary = downloaded == 0
-                ? "Download a wallpaper to add it to this device and the slideshow."
+                ? "Use Get to save wallpapers on this device. Choose Set or Add when you "
+                + "want one in the slideshow."
                 : included + " of " + downloaded + " downloaded wallpaper"
-                + (downloaded == 1 ? " is" : "s are") + " in the slideshow. "
-                + "Remove keeps the file; Delete removes it from this device.";
+                + (downloaded == 1 ? "" : "s") + (included == 1 ? " is" : " are")
+                + " in the slideshow. "
+                + (adapter.group() == LibraryGroup.ALL
+                ? "Remove keeps the file; Delete removes it from this device."
+                : adapter.group().label + " view shows " + adapter.getCount()
+                + "; Both wallpapers appear in Day and Night.");
         explanation.setText(summary);
+    }
+
+    private void updateLibraryGroupControls(SlideshowGridAdapter adapter,
+                                            Button allGroup, Button dayGroup,
+                                            Button nightGroup, TextView empty) {
+        styleLibraryGroupButton(allGroup, LibraryGroup.ALL, adapter);
+        styleLibraryGroupButton(dayGroup, LibraryGroup.DAY, adapter);
+        styleLibraryGroupButton(nightGroup, LibraryGroup.NIGHT, adapter);
+        if (adapter.downloadedCount() == 0) {
+            empty.setText(R.string.library_empty);
+        } else {
+            empty.setText(getString(R.string.library_group_empty,
+                    adapter.group().label.toUpperCase(Locale.ROOT)));
+        }
+    }
+
+    private void styleLibraryGroupButton(Button button, LibraryGroup group,
+                                         SlideshowGridAdapter adapter) {
+        boolean selected = adapter.group() == group;
+        button.setText(getString(R.string.library_group_count,
+                group.label, adapter.groupCount(group)));
+        button.setTextColor(selected ? Ui.NAV : Ui.TEXT);
+        button.setBackground(Ui.rounded(selected ? Ui.CYAN : Ui.SURFACE_HIGH,
+                Ui.dp(this, 10), selected ? Ui.CYAN : Ui.DIVIDER,
+                Ui.dp(this, selected ? 2 : 1)));
     }
 
     private void confirmWallpaperDeletion(File file, Runnable onConfirmed) {
@@ -973,7 +1083,7 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public void onShowNow(File selected) {
+            public void onSetNow(File selected) {
                 try {
                     WallpaperStore.include(MainActivity.this, selected);
                     WallpaperStore.select(MainActivity.this, selected);
@@ -1036,13 +1146,26 @@ public final class MainActivity extends Activity {
                 Toast.LENGTH_LONG).show();
     }
 
-    /** Opens a cached, bandwidth-saving preview without downloading or selecting the original. */
+    /** Opens a cached preview with explicit Get and Set actions for the original. */
     private void showWallpaperPreview(CatalogItem item) {
         RepositorySource source = activeSource;
         if (source == null) return;
         PreviewSequence sequence = new PreviewSequence(
                 gridAdapter.visibleItemsSnapshot(), item);
-        new WallpaperPreviewDialog(this, previewCache, source, sequence).show();
+        new WallpaperPreviewDialog(this, previewCache, source, sequence,
+                new WallpaperPreviewDialog.Listener() {
+                    @Override
+                    public void onGet(CatalogItem selected,
+                                      WallpaperPreviewDialog.ActionCallback callback) {
+                        getWallpaper(source, selected, callback);
+                    }
+
+                    @Override
+                    public void onSet(CatalogItem selected,
+                                      WallpaperPreviewDialog.ActionCallback callback) {
+                        setWallpaper(source, selected, callback);
+                    }
+                }).show();
     }
 
     private void activateWallpaper() {

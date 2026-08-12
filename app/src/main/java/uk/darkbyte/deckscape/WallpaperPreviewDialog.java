@@ -15,10 +15,25 @@ import android.widget.TextView;
 
 /** Landscape preview gallery for the current visible wallpaper results. */
 final class WallpaperPreviewDialog {
+    /** Receives explicit original-file actions without coupling preview rendering to storage. */
+    interface Listener {
+        void onGet(CatalogItem item, ActionCallback callback);
+
+        void onSet(CatalogItem item, ActionCallback callback);
+    }
+
+    /** Reports one asynchronous preview action back to its currently visible controls. */
+    interface ActionCallback {
+        void onProgress(int percent);
+
+        void onComplete(boolean success);
+    }
+
     private final Activity activity;
     private final PreviewCache previews;
     private final RepositorySource source;
     private final PreviewSequence sequence;
+    private final Listener listener;
 
     private AlertDialog dialog;
     private TextView title;
@@ -29,14 +44,18 @@ final class WallpaperPreviewDialog {
     private AnimatedGifView animation;
     private Button previous;
     private Button next;
+    private Button get;
+    private Button set;
     private int requestGeneration;
 
     WallpaperPreviewDialog(Activity activity, PreviewCache previews,
-                           RepositorySource source, PreviewSequence sequence) {
+                           RepositorySource source, PreviewSequence sequence,
+                           Listener listener) {
         this.activity = activity;
         this.previews = previews;
         this.source = source;
         this.sequence = sequence;
+        this.listener = listener;
     }
 
     /** Opens the gallery when its snapshot contains at least one wallpaper. */
@@ -70,6 +89,19 @@ final class WallpaperPreviewDialog {
         position.setTextColor(Ui.MUTED);
         actions.addView(position, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        get = Ui.button(activity, "Get", true);
+        LinearLayout.LayoutParams getParams = new LinearLayout.LayoutParams(
+                Ui.dp(activity, 112), Ui.dp(activity, 46));
+        getParams.rightMargin = Ui.dp(activity, 8);
+        actions.addView(get, getParams);
+
+        set = Ui.button(activity, "Set", false);
+        LinearLayout.LayoutParams setParams = new LinearLayout.LayoutParams(
+                Ui.dp(activity, 112), Ui.dp(activity, 46));
+        setParams.rightMargin = Ui.dp(activity, 8);
+        actions.addView(set, setParams);
+
         Button close = Ui.button(activity, "Close", false);
         actions.addView(close, new LinearLayout.LayoutParams(
                 Ui.dp(activity, 104), Ui.dp(activity, 46)));
@@ -78,6 +110,8 @@ final class WallpaperPreviewDialog {
 
         dialog = new AlertDialog.Builder(activity).setView(panel).create();
         close.setOnClickListener(view -> dialog.dismiss());
+        get.setOnClickListener(view -> getCurrent());
+        set.setOnClickListener(view -> setCurrent());
         previous.setOnClickListener(view -> {
             sequence.previous();
             renderCurrent();
@@ -150,7 +184,8 @@ final class WallpaperPreviewDialog {
         title.setText(displayName);
         description.setText(item.isGif()
                 ? "Animated preview • original GIF is cached temporarily for playback"
-                : "Optimised 16:9 preview • original downloads only when you choose Download");
+                : "Optimised 16:9 preview • choose Get to save the original");
+        refreshActions(item);
         position.setText(activity.getString(R.string.preview_position,
                 sequence.position(), sequence.size()));
         previous.setEnabled(sequence.hasPrevious());
@@ -195,6 +230,61 @@ final class WallpaperPreviewDialog {
 
     private boolean isCurrent(int generation) {
         return generation == requestGeneration && dialog != null && dialog.isShowing();
+    }
+
+    private void getCurrent() {
+        CatalogItem item = sequence.current();
+        if (item == null || listener == null) return;
+        int generation = requestGeneration;
+        get.setEnabled(false);
+        get.setText(R.string.preview_getting);
+        set.setEnabled(false);
+        listener.onGet(item, new ActionCallback() {
+            @Override
+            public void onProgress(int percent) {
+                if (!isCurrent(generation)) return;
+                get.setText(percent > 0
+                        ? activity.getString(R.string.preview_get_progress, percent)
+                        : activity.getString(R.string.preview_getting));
+            }
+
+            @Override
+            public void onComplete(boolean success) {
+                if (!isCurrent(generation)) return;
+                refreshActions(item);
+            }
+        });
+    }
+
+    private void setCurrent() {
+        CatalogItem item = sequence.current();
+        if (item == null || listener == null) return;
+        int generation = requestGeneration;
+        get.setEnabled(false);
+        set.setEnabled(false);
+        set.setText(R.string.preview_setting);
+        listener.onSet(item, new ActionCallback() {
+            @Override
+            public void onProgress(int percent) {
+                // Setting an on-device file has no meaningful byte progress.
+            }
+
+            @Override
+            public void onComplete(boolean success) {
+                if (!isCurrent(generation)) return;
+                refreshActions(item);
+            }
+        });
+    }
+
+    private void refreshActions(CatalogItem item) {
+        boolean installed = WallpaperStore.installedFile(activity, source, item) != null;
+        get.setText(installed ? "On device" : "Get");
+        get.setEnabled(!installed && WallpaperRules.canInstall(item));
+        get.setAlpha(get.isEnabled() ? 1f : 0.55f);
+        set.setText(R.string.action_set);
+        set.setEnabled(installed);
+        set.setAlpha(installed ? 1f : 0.55f);
     }
 
     private void styleDialog() {

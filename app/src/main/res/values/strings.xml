@@ -38,4 +38,11 @@
     <string name="refresh_location">Refresh automatic location</string>
     <string name="refresh_location_saved">Refresh automatic location • saved %1$s</string>
     <string name="preview_unavailable">PREVIEW UNAVAILABLE</string>
+    <string name="action_set">Set</string>
+    <string name="preview_getting">Getting…</string>
+    <string name="preview_get_progress">Get • %1$d%%</string>
+    <string name="preview_setting">Setting…</string>
+    <string name="library_empty">NO WALLPAPERS DOWNLOADED</string>
+    <string name="library_group_empty">NO %1$s WALLPAPERS</string>
+    <string name="library_group_count">%1$s (%2$d)</string>
 </resources>

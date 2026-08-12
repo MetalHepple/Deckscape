@@ -25,7 +25,7 @@ final class WallpaperOptionsDialog {
     interface Listener {
         void onProfileSaved(File file);
 
-        void onShowNow(File file);
+        void onSetNow(File file);
 
         void onSetIncluded(File file, boolean included);
 
@@ -175,7 +175,7 @@ final class WallpaperOptionsDialog {
         delete.setTextColor(Ui.CORAL);
         delete.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(activity, 10),
                 Ui.CORAL, Ui.dp(activity, 1)));
-        Button show = Ui.actionButton(activity, "Show now", false);
+        Button show = Ui.actionButton(activity, "Set now", false);
         Button cancel = Ui.actionButton(activity, "Cancel", false);
         Button save = Ui.button(activity, "Save options", true);
         addAction(activity, actions, delete, false);
@@ -195,7 +195,7 @@ final class WallpaperOptionsDialog {
             dialog.dismiss();
         });
         show.setOnClickListener(view -> {
-            listener.onShowNow(file);
+            listener.onSetNow(file);
             dialog.dismiss();
         });
         cancel.setOnClickListener(view -> dialog.dismiss());

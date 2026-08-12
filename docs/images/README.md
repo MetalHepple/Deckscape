@@ -5,9 +5,10 @@ debug build in an isolated Android emulator configured to 1920×1080 at
 240 dpi. The About screenshot also includes the subsequent unreleased
 contributor-profile presentation. Together they cover category browsing,
 wallpaper display options, custom crop, day/night roles, settings, contributors,
-licences, and update status. Additional historic 1.4.0/1.5.0 screenshots are
-retained for interface provenance. None contain vehicle, account, map, or
-location information.
+licences, and update status. The Library capture also includes the unreleased
+Get/Set split and All/Day/Night grouping. Additional historic 1.4.0/1.5.0
+screenshots are retained for interface provenance. None contain vehicle,
+account, map, or location information.
 
 The Settings screenshot exercises the no-light-sensor path with a synthetic
 emulator location fix. It shows the calculated sunrise/sunset and locally saved

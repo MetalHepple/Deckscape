@@ -22,7 +22,7 @@ import java.util.Set;
 final class SlideshowGridAdapter extends BaseAdapter {
     /** Receives wallpaper-library actions selected from a card. */
     interface Listener {
-        void onShowNow(File file);
+        void onSet(File file);
 
         void onSetIncluded(File file, boolean included);
 
@@ -33,9 +33,11 @@ final class SlideshowGridAdapter extends BaseAdapter {
     private final PreviewCache previews;
     private final Listener listener;
     private final WallpaperProfileStore profiles;
+    private final List<File> allFiles = new ArrayList<>();
     private final List<File> files = new ArrayList<>();
     private final Set<String> includedNames = new HashSet<>();
     private String currentName = "";
+    private LibraryGroup group = LibraryGroup.ALL;
 
     SlideshowGridAdapter(Context context, PreviewCache previews, Listener listener) {
         this.context = context;
@@ -47,13 +49,45 @@ final class SlideshowGridAdapter extends BaseAdapter {
 
     /** Reloads downloaded files, slideshow membership, and current selection from storage. */
     void refresh() {
-        files.clear();
-        files.addAll(WallpaperStore.listDownloaded(context));
+        allFiles.clear();
+        allFiles.addAll(WallpaperStore.listDownloaded(context));
         List<File> included = WallpaperStore.list(context);
         includedNames.clear();
         for (File file : included) includedNames.add(file.getName());
         File current = WallpaperStore.current(context, included);
         currentName = current == null ? "" : current.getName();
+        applyGroup();
+    }
+
+    /** Shows all downloads or the wallpapers eligible for one scheduled period. */
+    void setGroup(LibraryGroup value) {
+        group = value == null ? LibraryGroup.ALL : value;
+        applyGroup();
+    }
+
+    LibraryGroup group() {
+        return group;
+    }
+
+    int downloadedCount() {
+        return allFiles.size();
+    }
+
+    int groupCount(LibraryGroup value) {
+        int count = 0;
+        for (File file : allFiles) {
+            if ((value == null ? LibraryGroup.ALL : value).includes(profiles.get(file).role)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void applyGroup() {
+        files.clear();
+        for (File file : allFiles) {
+            if (group.includes(profiles.get(file).role)) files.add(file);
+        }
         notifyDataSetChanged();
     }
 
@@ -165,11 +199,11 @@ final class SlideshowGridAdapter extends BaseAdapter {
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, Ui.dp(context, 4), 0, 0);
 
-        Button show = compactButton(current ? "Showing" : "Show", current);
-        show.setSingleLine(true);
-        show.setEnabled(included && !current);
-        show.setOnClickListener(view -> listener.onShowNow(file));
-        actions.addView(show, weightedButtonParams(false));
+        Button set = compactButton(current ? "Showing" : "Set", current);
+        set.setSingleLine(true);
+        set.setEnabled(!current);
+        set.setOnClickListener(view -> listener.onSet(file));
+        actions.addView(set, weightedButtonParams(false));
 
         Button membership = compactButton(included ? "Remove" : "Add", !included);
         membership.setTextColor(included ? Ui.GREEN : Ui.CYAN);

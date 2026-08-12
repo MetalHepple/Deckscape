@@ -10,7 +10,7 @@ GitHub Contents / Git Trees API
                 |
        +--------+---------+
        v                  v
- visible card       Download / Show now
+ visible card          Get / Set
        |                  |
        v                  v
  wsrv.nl thumbnail   bounded raw download
@@ -39,7 +39,8 @@ folder or filtered results, omitting directories. `WallpaperPreviewDialog`
 keeps navigation within that snapshot and advances a request generation on
 every move, so a slower callback from the previous image cannot replace the
 currently selected preview. GIF animation is cleared immediately on navigation
-or dismissal.
+or dismissal. The same dialog exposes explicit Get and Set callbacks; its
+controls update only while the initiating item remains visible.
 
 ## Trust boundaries
 
@@ -100,15 +101,18 @@ Custom matrices from the decoded source and the actual locked canvas size, so
 manufacturer-reported wallpaper hints cannot introduce unexpected bars.
 
 The app-private wallpaper library and a private exclusion set define slideshow
-membership. Every validated download joins automatically; selecting **Show
-now** updates the current filename and a manual-override flag without removing
-other files. The Library panel reads the same state and generates bounded local
-previews through the shared preview cache.
+membership. A validated **Get** is immediately placed in that exclusion set, so
+the original remains on device without changing either the selected wallpaper
+or rotation. **Set** removes the exclusion, updates the current filename and a
+manual-override flag, and does not remove other files. The Library panel reads
+the same state, generates bounded local previews through the shared preview
+cache, and filters its view by stored Both/Day/Night roles. Both-role files
+appear in each scheduled view without being duplicated on disk.
 
 When Day & Night is enabled, `DayNightSettings` filters included files by their
 roles. Both period pools must remain non-empty. `WallpaperEngineService`
 switches immediately when the current period changes, but otherwise preserves
-a manual Show now choice until the next normal slideshow interval. Emptying a
+a manual Set choice until the next normal slideshow interval. Emptying a
 pool through an exclusion or delete automatically disables the feature.
 
 Automatic period detection prefers an ambient-light sensor. The sensor is

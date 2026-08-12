@@ -78,7 +78,7 @@ open Deckscape and activate its live wallpaper again.
   </tr>
   <tr>
     <td align="center"><strong>Touch-controlled crop and zoom</strong></td>
-    <td align="center"><strong>Visible Day & Night assignments</strong></td>
+    <td align="center"><strong>Grouped Day & Night library</strong></td>
   </tr>
   <tr>
     <td><img src="docs/images/deckscape-settings.png" alt="Deckscape day and night settings"></td>
@@ -99,13 +99,16 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Seven curated catalogs, with support for additional public GitHub repositories.
 - Image-backed folder categories plus an optional recursive **All wallpapers** view.
 - JPEG, PNG, WebP, and animated GIF wallpapers.
-- One-touch downloads with progress shown inside the selected card.
+- Explicit **Get** and **Set** actions: Get stores the original without changing
+  the wallpaper or slideshow; Set includes an on-device image and shows it.
+- Download progress is shown inside the selected card or Preview action.
 - Tap a wallpaper image or its **Preview** control to open a cached preview,
   then browse the current folder or search results with large previous/next
-  controls.
+  controls and Get/Set actions.
 - Animated GIFs play inside the in-app preview before installation.
 - Clear **On device**, **In slideshow**, **Ready**, and **Now showing** states.
-- Independent **Add**, **Remove**, and confirmed **Delete** library controls.
+- Independent **Set**, **Add**, **Remove**, and confirmed **Delete** library
+  controls, with All, Day, and Night views.
 - Per-wallpaper **Fill**, **Fit**, **Stretch**, and touch-controlled **Custom crop**.
 - One global display default for wallpapers without a custom choice.
 - Optional Day & Night roles with automatic or manual changeover.
@@ -134,7 +137,8 @@ saver can be disabled and the preview cache cleared from **Settings**.
 
 Opening an animated GIF preview fetches the validated original GIF within the
 12 MB animation limit and stores it in the same bounded temporary cache. It is
-not added to the slideshow unless **Download** is selected.
+not added to the local library unless **Get** is selected, and Get alone does
+not change the wallpaper or slideshow.
 
 Previous and next navigation follows a snapshot of the currently visible
 wallpapers, including the active search filter, and skips category folders.
@@ -143,14 +147,17 @@ See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
 
 ## Using the slideshow
 
-Every wallpaper you download is included in the slideshow automatically.
-**Show** changes the image currently displayed without removing any of the
-other included wallpapers. **Remove** takes an image out of rotation while
-keeping the download on the device; **Add** restores it without another
-download. **Delete** permanently removes the downloaded file after confirmation.
+**Get** downloads a wallpaper into Deckscape's private library without changing
+the display or rotation. **Set** includes that on-device image in the slideshow
+and makes it current without removing any other included wallpapers. **Remove**
+takes an image out of rotation while keeping the download on the device;
+**Add** restores it without another download. **Delete** permanently removes
+the downloaded file after confirmation.
 
 Use **Library** in the top bar to see the complete downloaded set, manage its
-slideshow membership, and identify the current image. The adjacent status pill
+slideshow membership, and identify the current image. Its **All**, **Day**, and
+**Night** views group assigned images without changing their stored roles;
+**Both** images intentionally appear in Day and Night. The adjacent status pill
 opens Deckscape's one-time activation guide when setup is needed.
 
 ## Display and Day & Night options
@@ -174,7 +181,7 @@ read-only times in Automatic mode; editable fixed times appear only after
 choosing **Manual times**. The one-minute search is cancellable. Choose Manual
 mode to avoid location entirely or set a fixed schedule.
 
-Manual **Show now** choices are respected until the next normal slideshow
+Manual **Set now** choices are respected until the next normal slideshow
 interval. If removing or deleting a wallpaper empties either period, Day &
 Night turns off safely instead of leaving the live wallpaper without a choice.
 
