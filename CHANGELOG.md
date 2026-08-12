@@ -3,6 +3,17 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [1.7.2] - 2026-08-12
+
+### Fixed
+
+- Update verification now supports Android 10 vendor builds that return an
+  empty modern signing-certificate field for downloaded APK archives.
+- The verifier prefers Android's modern signing metadata and uses the legacy
+  certificate field only when the modern field is unavailable. Existing strict
+  checks for the installed signer, pinned Deckscape release certificate,
+  package name, version, and increasing version code remain unchanged.
+
 ## [1.7.1] - 2026-08-12
 
 ### Fixed

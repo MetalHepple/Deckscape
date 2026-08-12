@@ -30,7 +30,7 @@ devices that support live wallpapers and allow APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.1.apk"><strong>Download Deckscape 1.7.1 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.2.apk"><strong>Download Deckscape 1.7.2 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
