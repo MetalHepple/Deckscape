@@ -32,13 +32,14 @@ final class UpdateVerifier {
 
     private UpdateVerifier() {}
 
+    @SuppressWarnings("deprecation")
     static Result verify(Context context, File file, String expectedVersion) throws IOException {
         if (!file.isFile() || file.length() <= 0 || file.length() > UpdateRules.MAX_APK_BYTES) {
             throw new IOException("The downloaded update file is invalid");
         }
         PackageManager manager = context.getPackageManager();
         PackageInfo candidate = manager.getPackageArchiveInfo(file.getAbsolutePath(),
-                PackageManager.GET_SIGNING_CERTIFICATES);
+                PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_SIGNATURES);
         if (candidate == null) throw new IOException("Android could not read the update APK");
         if (!context.getPackageName().equals(candidate.packageName)) {
             throw new IOException("The update APK has the wrong package name");
@@ -55,14 +56,16 @@ final class UpdateVerifier {
         PackageInfo installed;
         try {
             installed = manager.getPackageInfo(context.getPackageName(),
-                    PackageManager.GET_SIGNING_CERTIFICATES);
+                    PackageManager.GET_SIGNING_CERTIFICATES | PackageManager.GET_SIGNATURES);
         } catch (PackageManager.NameNotFoundException exception) {
             throw new IOException("Deckscape's installed package could not be verified", exception);
         }
         Set<String> installedSigners = signerDigests(installed);
         Set<String> candidateSigners = signerDigests(candidate);
-        if (installedSigners.isEmpty() || candidateSigners.isEmpty()
-                || !installedSigners.equals(candidateSigners)) {
+        if (installedSigners.isEmpty() || candidateSigners.isEmpty()) {
+            throw new IOException("Android could not read the APK signing certificate");
+        }
+        if (!installedSigners.equals(candidateSigners)) {
             throw new IOException(BuildConfig.DEBUG
                     ? "This test build uses a different signing key from the release APK"
                     : "The update APK signing certificate does not match Deckscape");
@@ -75,10 +78,15 @@ final class UpdateVerifier {
         return new Result(file, UpdateVersion.normalize(candidate.versionName), versionCode);
     }
 
+    /** Reads modern signing metadata, with a fallback for incomplete vendor PackageManager builds. */
+    @SuppressWarnings("deprecation")
     private static Set<String> signerDigests(PackageInfo info) throws IOException {
         Set<String> result = new HashSet<>();
-        if (info.signingInfo == null) return result;
-        Signature[] signatures = info.signingInfo.getApkContentsSigners();
+        Signature[] signatures = info.signingInfo == null
+                ? null : info.signingInfo.getApkContentsSigners();
+        if ((signatures == null || signatures.length == 0) && info.signatures != null) {
+            signatures = info.signatures;
+        }
         if (signatures == null) return result;
         for (Signature signature : signatures) result.add(sha256(signature.toByteArray()));
         return result;
