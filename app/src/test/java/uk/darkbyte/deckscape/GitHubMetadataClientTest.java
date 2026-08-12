@@ -13,11 +13,60 @@ public class GitHubMetadataClientTest {
     @Test
     public void contributorsExcludeBots() throws Exception {
         List<RepositoryMetadata.Contributor> values = GitHubMetadataClient.parseContributors(
-                "[{\"login\":\"MetalHepple\",\"html_url\":\"https://github.com/MetalHepple\",\"contributions\":9},"
+                "[{\"login\":\"alice\",\"html_url\":\"https://github.com/alice\","
+                        + "\"avatar_url\":\"https://avatars.githubusercontent.com/u/123?v=4\","
+                        + "\"contributions\":9},"
                         + "{\"login\":\"dependabot[bot]\",\"type\":\"Bot\",\"contributions\":2}]");
         assertEquals(1, values.size());
-        assertEquals("MetalHepple", values.get(0).login);
-        assertEquals(9, values.get(0).contributions);
+        assertEquals("alice", values.get(0).displayName);
+        assertEquals("alice", values.get(0).login);
+        assertEquals("alice", values.get(0).displayLabel());
+        assertEquals("https://avatars.githubusercontent.com/u/123?v=4",
+                values.get(0).avatarUrl);
+    }
+
+    @Test
+    public void creatorAccountAndAnonymousCommitsBecomeOneFriendlyProfile() throws Exception {
+        List<RepositoryMetadata.Contributor> values = GitHubMetadataClient.parseContributors(
+                "[{\"name\":\"Paul Hepple\",\"contributions\":3},"
+                        + "{\"login\":\"MetalHepple\","
+                        + "\"html_url\":\"https://github.com/MetalHepple\","
+                        + "\"avatar_url\":\"https://avatars.githubusercontent.com/u/68790254?v=4\","
+                        + "\"contributions\":1}]");
+
+        assertEquals(1, values.size());
+        RepositoryMetadata.Contributor creator = values.get(0);
+        assertEquals("Paul Hepple", creator.displayName);
+        assertEquals("MetalHepple", creator.login);
+        assertEquals("Paul Hepple (@MetalHepple)", creator.displayLabel());
+        assertEquals("https://github.com/MetalHepple", creator.pageUrl);
+        assertEquals("https://avatars.githubusercontent.com/u/68790254?v=4",
+                creator.avatarUrl);
+    }
+
+    @Test
+    public void anonymousCreatorUsesKnownPublicProfileAndAvatar() throws Exception {
+        List<RepositoryMetadata.Contributor> values = GitHubMetadataClient.parseContributors(
+                "[{\"name\":\"Paul Hepple\",\"type\":\"Anonymous\","
+                        + "\"contributions\":3}]");
+
+        assertEquals(1, values.size());
+        RepositoryMetadata.Contributor creator = values.get(0);
+        assertEquals("Paul Hepple (@MetalHepple)", creator.displayLabel());
+        assertEquals(AppMetadata.CREATOR_URL, creator.pageUrl);
+        assertEquals(AppMetadata.CREATOR_AVATAR_URL, creator.avatarUrl);
+    }
+
+    @Test
+    public void contributorAvatarUrlsUseOnlyGitHubsNumericAvatarEndpoint() {
+        assertTrue(GitHubMetadataClient.isAllowedAvatarUrl(
+                "https://avatars.githubusercontent.com/u/68790254?v=4"));
+        assertFalse(GitHubMetadataClient.isAllowedAvatarUrl(
+                "https://avatars.githubusercontent.com/example.png"));
+        assertFalse(GitHubMetadataClient.isAllowedAvatarUrl(
+                "https://avatars.githubusercontent.com.evil.test/u/68790254"));
+        assertFalse(GitHubMetadataClient.isAllowedAvatarUrl(
+                "http://avatars.githubusercontent.com/u/68790254"));
     }
 
     @Test

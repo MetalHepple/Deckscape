@@ -3,6 +3,52 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [1.7.0] - 2026-08-12
+
+### Added
+
+- Large previous and next controls turn Preview into a gallery that follows the
+  current folder or filtered search results.
+- Preview now provides direct **Get** and **Set** actions with in-place download
+  progress.
+- The downloaded Library has **All**, **Day**, and **Night** views with live
+  counts; Both-role wallpapers intentionally appear in both scheduled views.
+
+### Changed
+
+- Tapping a wallpaper thumbnail now opens its preview directly; the existing
+  Preview button remains available.
+- **Get** now downloads to the on-device Library only. It does not select the
+  wallpaper or add it to rotation; **Set** is the explicit include-and-show
+  action in the catalogue, Preview, and Library.
+- Tapping a Library card's role badge now cycles **Both → Day → Night → Both**
+  and refreshes the grouped counts immediately.
+- Automatic sunrise/sunset now requests a reliable foreground GPS fix on older
+  head units, allows up to one minute for a cold fix, and exposes an immediate
+  cancel action while searching.
+- Location denial, cancellation, and timeout preserve the chosen schedule mode;
+  the visible Automatic/Manual selector no longer disagrees with saved state.
+- Automatic scheduling now shows today's calculated sunrise and sunset as
+  read-only times. The editable fallback fields appear only in Manual mode.
+- Reusing a recent on-device location now explicitly says that a new GPS fix
+  was unnecessary.
+- About now presents each GitHub contributor as one friendly profile, including
+  a cached profile image and a direct profile link.
+- The creator's anonymous and GitHub-linked commit identities are merged into
+  `Paul Hepple (@MetalHepple)` and raw commit counts are no longer displayed.
+
+### Security and reliability
+
+- Contributor avatars are restricted to GitHub's numeric avatar endpoint,
+  capped before decoding, cached privately for offline use, and pruned within a
+  4 MB disk ceiling. Initials remain visible when an avatar is unavailable.
+- Preview navigation uses a stable visible-list snapshot and ignores late image
+  callbacks after the user has moved to another wallpaper.
+- Recent on-device fixes are age-bounded: fixes under 24 hours can be accepted
+  immediately and fixes over seven days are never used as a timeout fallback.
+- Every acquired coordinate is rounded to 0.1 degrees before private storage;
+  precise input is discarded and background location is never requested.
+
 ## [1.6.0] - 2026-08-10
 
 ### Added
@@ -163,6 +209,7 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
+[1.7.0]: https://github.com/MetalHepple/Deckscape/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/MetalHepple/Deckscape/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/MetalHepple/Deckscape/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/MetalHepple/Deckscape/compare/v1.3.0...v1.4.0

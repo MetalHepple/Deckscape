@@ -3,6 +3,8 @@
     <string name="app_name">Deckscape</string>
     <string name="wallpaper_description">A landscape live-wallpaper gallery backed by user-selected GitHub repositories.</string>
     <string name="no_preview">NO PREVIEW</string>
+    <string name="loading_preview">LOADING PREVIEW</string>
+    <string name="preview_position">%1$d / %2$d</string>
     <string name="too_large">Too large</string>
     <string name="info">About</string>
     <string name="update_available">Update</string>
@@ -11,7 +13,19 @@
     <string name="retry_update">Try again</string>
     <string name="checking_update">Checking…</string>
     <string name="downloading_update">Downloading…</string>
-    <string name="finding_location">Finding approximate location…</string>
+    <string name="cancel_location_search">Cancel location search</string>
+    <string name="location_permission_title">Allow a one-time GPS fix?</string>
+    <string name="location_permission_message">Automatic sunrise and sunset needs one foreground location fix. Older and non-Google head units may require Android\'s precise GPS permission, but Deckscape immediately rounds the result to an approximate area, stores it only on this device, and stops location access. It never requests background location.</string>
+    <string name="manual_day_begins">DAY BEGINS</string>
+    <string name="manual_night_begins">NIGHT BEGINS</string>
+    <string name="automatic_control">AUTOMATIC CONTROL</string>
+    <string name="fixed_times">FIXED TIMES</string>
+    <string name="ambient_light">Ambient light</string>
+    <string name="not_used">Not used</string>
+    <string name="todays_sunrise">TODAY\'S SUNRISE</string>
+    <string name="todays_sunset">TODAY\'S SUNSET</string>
+    <string name="location_needed">Location needed</string>
+    <string name="solar_time_unavailable">Unavailable today</string>
     <string name="day_night_status">%1$s  •  %2$s now\n%3$s / %4$s  •  %5$s</string>
     <plurals name="day_wallpapers">
         <item quantity="one">%1$d day wallpaper</item>
@@ -24,4 +38,11 @@
     <string name="refresh_location">Refresh automatic location</string>
     <string name="refresh_location_saved">Refresh automatic location • saved %1$s</string>
     <string name="preview_unavailable">PREVIEW UNAVAILABLE</string>
+    <string name="action_set">Set</string>
+    <string name="preview_getting">Getting…</string>
+    <string name="preview_get_progress">Get • %1$d%%</string>
+    <string name="preview_setting">Setting…</string>
+    <string name="library_empty">NO WALLPAPERS DOWNLOADED</string>
+    <string name="library_group_empty">NO %1$s WALLPAPERS</string>
+    <string name="library_group_count">%1$s (%2$d)</string>
 </resources>

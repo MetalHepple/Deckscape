@@ -6,6 +6,12 @@ package uk.darkbyte.deckscape;
  */
 final class AppMetadata {
     static final String DISPLAY_NAME = "Deckscape";
+    static final String CREATOR_NAME = "Paul Hepple";
+    static final String CREATOR_LOGIN = "MetalHepple";
+    static final String CREATOR_URL = "https://github.com/MetalHepple";
+    static final String CREATOR_AVATAR_URL =
+            "https://avatars.githubusercontent.com/u/68790254?v=4";
+    static final String REPOSITORY_URL = "https://github.com/MetalHepple/Deckscape";
 
     private AppMetadata() {}
 

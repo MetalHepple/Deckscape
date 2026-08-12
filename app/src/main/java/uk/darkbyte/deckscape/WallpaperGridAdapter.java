@@ -117,6 +117,11 @@ final class WallpaperGridAdapter extends BaseAdapter {
         return getItem(position).path.hashCode();
     }
 
+    /** Returns a stable snapshot so a preview dialog follows the current search results. */
+    List<CatalogItem> visibleItemsSnapshot() {
+        return new ArrayList<>(visibleItems);
+    }
+
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
         CatalogItem item = getItem(position);
@@ -214,6 +219,10 @@ final class WallpaperGridAdapter extends BaseAdapter {
         FrameLayout imageFrame = new FrameLayout(context);
         imageFrame.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(context, 10)));
         imageFrame.setClipToOutline(true);
+        imageFrame.setClickable(true);
+        imageFrame.setFocusable(true);
+        imageFrame.setContentDescription("Preview " + WallpaperStore.displayName(item.name));
+        imageFrame.setOnClickListener(view -> listener.onPreview(item));
         card.addView(imageFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 122)));
 
@@ -279,7 +288,7 @@ final class WallpaperGridAdapter extends BaseAdapter {
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         actions.addView(preview, previewParams);
 
-        FrameLayout actionBox = buildAction(item, percent, installed, included, selected, active);
+        FrameLayout actionBox = buildAction(item, percent, installed, active);
         LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         actionParams.leftMargin = Ui.dp(context, 6);
@@ -303,18 +312,15 @@ final class WallpaperGridAdapter extends BaseAdapter {
         return card;
     }
 
-    private FrameLayout buildAction(CatalogItem item, Integer percent, boolean installed,
-                                    boolean included, boolean selected, boolean active) {
+    private FrameLayout buildAction(CatalogItem item, Integer percent,
+                                    boolean installed, boolean active) {
         FrameLayout box = new FrameLayout(context);
         String label = !WallpaperRules.canInstall(item) ? context.getString(R.string.too_large)
                 : percent != null ? (percent < 0 ? "Starting" : percent + "%")
-                : active ? "Showing"
-                : selected ? "Ready"
-                : included ? "Show now"
-                : installed ? "Add" : "Download";
+                : installed ? "Set" : "Get";
         boolean enabled = WallpaperRules.canInstall(item)
-                && percent == null && !active && !selected;
-        Button action = Ui.actionButton(context, label, !installed || !included || selected);
+                && percent == null && !active;
+        Button action = Ui.actionButton(context, label, !installed);
         action.setSingleLine(true);
         action.setTextSize(12);
         action.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
@@ -323,10 +329,6 @@ final class WallpaperGridAdapter extends BaseAdapter {
         if (active) {
             action.setBackground(Ui.rounded(Ui.CYAN_DARK, Ui.dp(context, 10),
                     Ui.CYAN, Ui.dp(context, 2)));
-        } else if (included) {
-            action.setTextColor(Ui.GREEN);
-            action.setBackground(Ui.rounded(Ui.GREEN_DARK, Ui.dp(context, 10),
-                    Ui.GREEN, Ui.dp(context, 1)));
         } else if (installed) {
             action.setTextColor(Ui.CYAN);
         }

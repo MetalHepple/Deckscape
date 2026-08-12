@@ -10,7 +10,7 @@ GitHub Contents / Git Trees API
                 |
        +--------+---------+
        v                  v
- visible card       Download / Show now
+ visible card          Get / Set
        |                  |
        v                  v
  wsrv.nl thumbnail   bounded raw download
@@ -34,6 +34,14 @@ representative child image for each category card. The full wallpaper is still
 not downloaded merely to show the category: it follows the same bounded preview
 pipeline as an ordinary visible wallpaper card.
 
+Opening a wallpaper creates a `PreviewSequence` snapshot from the current
+folder or filtered results, omitting directories. `WallpaperPreviewDialog`
+keeps navigation within that snapshot and advances a request generation on
+every move, so a slower callback from the previous image cannot replace the
+currently selected preview. GIF animation is cleared immediately on navigation
+or dismissal. The same dialog exposes explicit Get and Set callbacks; its
+controls update only while the initiating item remains visible.
+
 ## Trust boundaries
 
 `RepositorySource` validates GitHub owner, repository, branch, and path input.
@@ -53,8 +61,12 @@ renamed into the private library.
 
 `GitHubMetadataClient` separately loads public contributor and repository-level
 licence data for About. Requests remain under `api.github.com`, enforce a
-512 KB response cap, filter bot contributors, and use independent cache
-freshness windows. Wallpaper rendering never depends on this metadata.
+512 KB response cap, filter bot contributors, merge the creator's linked and
+anonymous commit identities, and use independent cache freshness windows.
+Public profile images are accepted only from GitHub's numeric
+`avatars.githubusercontent.com/u/<id>` endpoint, capped at 512 KB and 1,024
+pixels per axis before bounded downsampling for display. Wallpaper rendering
+never depends on this metadata.
 
 ## Caches
 
@@ -68,6 +80,8 @@ freshness windows. Wallpaper rendering never depends on this metadata.
   library-management action.
 - Contributor metadata: app cache directory, 24-hour freshness and stale
   offline fallback.
+- Contributor profile images: app cache directory, seven-day freshness, 4 MB
+  ceiling pruned to 3 MB, with an initial-letter fallback.
 - Source-licence metadata: app cache directory, seven-day freshness and stale
   offline fallback.
 
@@ -87,24 +101,41 @@ Custom matrices from the decoded source and the actual locked canvas size, so
 manufacturer-reported wallpaper hints cannot introduce unexpected bars.
 
 The app-private wallpaper library and a private exclusion set define slideshow
-membership. Every validated download joins automatically; selecting **Show
-now** updates the current filename and a manual-override flag without removing
-other files. The Library panel reads the same state and generates bounded local
-previews through the shared preview cache.
+membership. A validated **Get** is immediately placed in that exclusion set, so
+the original remains on device without changing either the selected wallpaper
+or rotation. **Set** removes the exclusion, updates the current filename and a
+manual-override flag, and does not remove other files. The Library panel reads
+the same state, generates bounded local previews through the shared preview
+cache, and filters its view by stored Both/Day/Night roles. Both-role files
+appear in each scheduled view without being duplicated on disk. Each Library
+role badge is backed by a 48dp focusable touch target and cycles through the
+three roles in a deterministic order; saving triggers the same group refresh
+and incomplete-schedule safety check as the full Options panel.
 
 When Day & Night is enabled, `DayNightSettings` filters included files by their
 roles. Both period pools must remain non-empty. `WallpaperEngineService`
 switches immediately when the current period changes, but otherwise preserves
-a manual Show now choice until the next normal slideshow interval. Emptying a
+a manual Set choice until the next normal slideshow interval. Emptying a
 pool through an exclusion or delete automatically disables the feature.
 
 Automatic period detection prefers an ambient-light sensor. The sensor is
 registered only while the wallpaper is visible; `AmbientLightTracker` uses
 separate day/night thresholds plus settling and hysteresis windows to avoid
-rapid changes. Without a sensor, a foreground-only approximate location fix is
-rounded to 0.1 degrees and used by `DayPhaseResolver` for on-device solar
-calculations. Manual times are the permission-free fallback. No background
-location service, remote solar API, or wakeup alarm is used.
+rapid changes. Without a sensor, a foreground-only location fix is
+requested explicitly from Settings. Android 11 and older require fine foreground
+access because non-Google head units may expose GPS without a functional network
+provider; Android 12 and newer accepts the user's approximate choice. The result
+is immediately rounded to 0.1 degrees and used by `DayPhaseResolver` for
+on-device solar calculations. Settings reads today's boundaries from that same
+resolver and presents them as read-only sunrise/sunset values; the manual time
+spinners are shown only when Manual mode is selected.
+
+`CoarseLocationClient` checks fused, network, GPS, and passive providers, accepts
+only a fix from the last 24 hours immediately, and permits a fix up to seven days
+old solely as a timeout fallback. A fresh request runs for at most 60 seconds,
+can be cancelled from the visible Settings panel, and stops when the Activity
+leaves the foreground. Manual times are the permission-free fallback. No
+background location service, remote solar API, or wakeup alarm is used.
 
 Android owns activation. Deckscape opens
 `ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.
@@ -117,10 +148,11 @@ All mutating wallpaper actions flow through `WallpaperStore`,
 library-changed broadcast. The engine reloads its files and profiles from those
 stores rather than accepting file paths or settings from external intents.
 
-Approximate location is requested only after an explicit Settings action.
-Android backup and device-transfer extraction are disabled, so private
-wallpapers, coordinates, profiles, and cached metadata are not opted into cloud
-backup by the app.
+Location is requested only after an explicit Settings action and an in-app
+explanation. A timeout, denial, or cancellation preserves the selected schedule
+mode instead of silently changing the spinner. Android backup and device-transfer
+extraction are disabled, so private wallpapers, rounded coordinates, profiles,
+and cached metadata are not opted into cloud backup by the app.
 
 ## Application updates
 

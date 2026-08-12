@@ -1,11 +1,17 @@
 # Screenshot provenance
 
-The screenshots used by the current README were captured from a version 1.6.0
-debug build in an isolated Android emulator configured to 1920×1080 at
-240 dpi. They cover category browsing, wallpaper display options, custom crop,
-day/night roles, settings, contributors, licences, and update status. Additional
-historic 1.4.0/1.5.0 screenshots are retained for interface provenance. None
-contain vehicle, account, map, or location information.
+The screenshots used by the current README were captured from version 1.6.0
+and 1.7.0 candidate debug builds in an isolated Android emulator configured to
+1920×1080 at 240 dpi. Together they cover category browsing,
+wallpaper display options, custom crop, day/night roles, settings, contributors,
+licences, and update status. The Library capture also includes the 1.7.0
+Get/Set split and All/Day/Night grouping. Additional historic 1.4.0/1.5.0
+screenshots are retained for interface provenance. None contain vehicle,
+account, map, or location information.
+
+The Settings screenshot exercises the no-light-sensor path with a synthetic
+emulator location fix. It shows the calculated sunrise/sunset and locally saved
+date; no coordinate or real-world location is present in the image.
 
 The interface is Deckscape project material. Wallpaper previews visible inside
 the interface came from the public `fr0st-xyz/wallz` catalog and remain subject

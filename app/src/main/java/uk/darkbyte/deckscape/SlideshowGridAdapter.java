@@ -22,9 +22,11 @@ import java.util.Set;
 final class SlideshowGridAdapter extends BaseAdapter {
     /** Receives wallpaper-library actions selected from a card. */
     interface Listener {
-        void onShowNow(File file);
+        void onSet(File file);
 
         void onSetIncluded(File file, boolean included);
+
+        void onCycleRole(File file, DayNightRole currentRole);
 
         void onOptions(File file);
     }
@@ -33,9 +35,11 @@ final class SlideshowGridAdapter extends BaseAdapter {
     private final PreviewCache previews;
     private final Listener listener;
     private final WallpaperProfileStore profiles;
+    private final List<File> allFiles = new ArrayList<>();
     private final List<File> files = new ArrayList<>();
     private final Set<String> includedNames = new HashSet<>();
     private String currentName = "";
+    private LibraryGroup group = LibraryGroup.ALL;
 
     SlideshowGridAdapter(Context context, PreviewCache previews, Listener listener) {
         this.context = context;
@@ -47,13 +51,45 @@ final class SlideshowGridAdapter extends BaseAdapter {
 
     /** Reloads downloaded files, slideshow membership, and current selection from storage. */
     void refresh() {
-        files.clear();
-        files.addAll(WallpaperStore.listDownloaded(context));
+        allFiles.clear();
+        allFiles.addAll(WallpaperStore.listDownloaded(context));
         List<File> included = WallpaperStore.list(context);
         includedNames.clear();
         for (File file : included) includedNames.add(file.getName());
         File current = WallpaperStore.current(context, included);
         currentName = current == null ? "" : current.getName();
+        applyGroup();
+    }
+
+    /** Shows all downloads or the wallpapers eligible for one scheduled period. */
+    void setGroup(LibraryGroup value) {
+        group = value == null ? LibraryGroup.ALL : value;
+        applyGroup();
+    }
+
+    LibraryGroup group() {
+        return group;
+    }
+
+    int downloadedCount() {
+        return allFiles.size();
+    }
+
+    int groupCount(LibraryGroup value) {
+        int count = 0;
+        for (File file : allFiles) {
+            if ((value == null ? LibraryGroup.ALL : value).includes(profiles.get(file).role)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void applyGroup() {
+        files.clear();
+        for (File file : allFiles) {
+            if (group.includes(profiles.get(file).role)) files.add(file);
+        }
         notifyDataSetChanged();
     }
 
@@ -138,17 +174,26 @@ final class SlideshowGridAdapter extends BaseAdapter {
         imageFrame.addView(badge, badgeParams);
 
         TextView roleBadge = Ui.title(context,
-                profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name(), 9);
+                (profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name()) + "  ↻", 9);
         roleBadge.setTextColor(Ui.NAV);
         roleBadge.setGravity(Gravity.CENTER);
         roleBadge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
         roleBadge.setBackground(Ui.rounded(profile.role == DayNightRole.NIGHT
                         ? Ui.CORAL : Ui.CYAN, Ui.dp(context, 7)));
-        FrameLayout.LayoutParams roleParams = new FrameLayout.LayoutParams(
+        FrameLayout roleTarget = new FrameLayout(context);
+        roleTarget.setClickable(true);
+        roleTarget.setFocusable(true);
+        roleTarget.setContentDescription("Change " + WallpaperStore.displayName(file)
+                + " from " + profile.role.label + " to " + profile.role.next().label);
+        roleTarget.setOnClickListener(view -> listener.onCycleRole(file, profile.role));
+        FrameLayout.LayoutParams roleBadgeParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
-                Gravity.TOP | Gravity.END);
-        roleParams.setMargins(0, Ui.dp(context, 7), Ui.dp(context, 7), 0);
-        imageFrame.addView(roleBadge, roleParams);
+                Gravity.CENTER_VERTICAL | Gravity.END);
+        roleTarget.addView(roleBadge, roleBadgeParams);
+        FrameLayout.LayoutParams roleTargetParams = new FrameLayout.LayoutParams(
+                Ui.dp(context, 96), Ui.dp(context, 48), Gravity.TOP | Gravity.END);
+        roleTargetParams.setMargins(0, 0, Ui.dp(context, 7), 0);
+        imageFrame.addView(roleTarget, roleTargetParams);
 
         TextView title = Ui.title(context, WallpaperStore.displayName(file), 12);
         title.setSingleLine(true);
@@ -165,11 +210,11 @@ final class SlideshowGridAdapter extends BaseAdapter {
         actions.setGravity(Gravity.CENTER_VERTICAL);
         actions.setPadding(0, Ui.dp(context, 4), 0, 0);
 
-        Button show = compactButton(current ? "Showing" : "Show", current);
-        show.setSingleLine(true);
-        show.setEnabled(included && !current);
-        show.setOnClickListener(view -> listener.onShowNow(file));
-        actions.addView(show, weightedButtonParams(false));
+        Button set = compactButton(current ? "Showing" : "Set", current);
+        set.setSingleLine(true);
+        set.setEnabled(!current);
+        set.setOnClickListener(view -> listener.onSet(file));
+        actions.addView(set, weightedButtonParams(false));
 
         Button membership = compactButton(included ? "Remove" : "Add", !included);
         membership.setTextColor(included ? Ui.GREEN : Ui.CYAN);

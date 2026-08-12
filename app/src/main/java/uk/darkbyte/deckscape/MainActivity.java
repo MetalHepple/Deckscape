@@ -9,12 +9,14 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.location.Location;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.SpannableString;
@@ -56,7 +58,7 @@ import java.util.concurrent.Executors;
  * thread and are guarded by request generations when navigation supersedes an older request.
  */
 public final class MainActivity extends Activity {
-    private static final int REQUEST_COARSE_LOCATION = 41;
+    private static final int REQUEST_FOREGROUND_LOCATION = 41;
     private static final String UI_PREFS = "ui_state";
     private static final String KEY_LAST_SOURCE = "last_source";
     private static final String[] INTERVAL_LABELS = {
@@ -104,6 +106,13 @@ public final class MainActivity extends Activity {
     private AlertDialog settingsDialog;
     private Button settingsDayNightToggle;
     private TextView settingsDayNightStatus;
+    private Spinner settingsScheduleMode;
+    private TextView settingsDayTimeLabel;
+    private TextView settingsNightTimeLabel;
+    private Spinner settingsDayTimeSpinner;
+    private Spinner settingsNightTimeSpinner;
+    private TextView settingsDayCalculatedTime;
+    private TextView settingsNightCalculatedTime;
     private Button settingsLocationButton;
     private boolean pendingEnableDayNight;
     private AlertDialog infoDialog;
@@ -157,20 +166,27 @@ public final class MainActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode != REQUEST_COARSE_LOCATION) return;
-        if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            resolveCoarseLocation();
+        if (requestCode != REQUEST_FOREGROUND_LOCATION) return;
+        if (hasUsableForegroundLocationPermission()) {
+            resolveAutomaticLocation();
         } else {
             boolean shouldEnable = pendingEnableDayNight;
             pendingEnableDayNight = false;
-            dayNightSettings.setMode(ScheduleMode.MANUAL);
-            if (shouldEnable) dayNightSettings.setEnabled(true);
-            broadcastConfigurationChanged();
             refreshSettingsStatus();
             Toast.makeText(this,
-                    "Approximate location was not enabled. Deckscape is using manual times.",
+                    shouldEnable
+                            ? "GPS access was not enabled. Day & Night remains off; choose Manual or try again."
+                            : "GPS access was not enabled. Choose Manual times or try again.",
                     Toast.LENGTH_LONG).show();
         }
+    }
+
+    @Override
+    protected void onStop() {
+        if (locationClient != null && locationClient.isRequesting()) {
+            cancelAutomaticLocation(false);
+        }
+        super.onStop();
     }
 
     @Override
@@ -615,65 +631,108 @@ public final class MainActivity extends Activity {
             loadDirectory(activeSource.relativePath(item.path));
             return;
         }
+        RepositorySource source = activeSource;
+        if (WallpaperStore.installedFile(this, source, item) == null) {
+            getWallpaper(source, item, null);
+        } else {
+            setWallpaper(source, item, null);
+        }
+    }
+
+    /** Downloads an original into the local library without selecting or rotating it. */
+    private void getWallpaper(RepositorySource source, CatalogItem item,
+                              WallpaperPreviewDialog.ActionCallback callback) {
         if (!WallpaperRules.canInstall(item)) {
             Toast.makeText(this, "This file exceeds Deckscape's safe size limit.",
                     Toast.LENGTH_LONG).show();
+            if (callback != null) callback.onComplete(false);
             return;
         }
-        RepositorySource source = activeSource;
         String displayName = WallpaperStore.displayName(item.name);
         File existing = WallpaperStore.installedFile(this, source, item);
-        boolean addOnly = existing != null && !WallpaperStore.isIncluded(this, existing);
-        if (existing == null) {
-            setStatus("Preparing " + displayName + "…");
-            gridAdapter.setDownloadProgress(source, item, -1);
-        } else {
-            setStatus((addOnly ? "Adding " : "Showing ") + displayName + "…");
+        if (existing != null) {
+            if (callback != null) callback.onComplete(true);
+            return;
         }
+        setStatus("Preparing " + displayName + "…");
+        gridAdapter.setDownloadProgress(source, item, -1);
         io.execute(() -> {
             try {
-                File file = existing;
-                if (file == null) {
-                    runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
-                    int[] lastPercent = {-1};
-                    file = WallpaperStore.install(this, source, item, (downloaded, total) -> {
-                        int percent = total > 0 ? (int) Math.min(100, downloaded * 100 / total) : 0;
-                        if (percent == lastPercent[0]) return;
-                        lastPercent[0] = percent;
-                        runOnUiThread(() -> {
-                            gridAdapter.setDownloadProgress(source, item, percent);
-                            setStatus("Downloading " + displayName + " • " + percent + "%");
-                        });
+                runOnUiThread(() -> gridAdapter.setDownloadProgress(source, item, 0));
+                int[] lastPercent = {-1};
+                File file = WallpaperStore.install(this, source, item, (downloaded, total) -> {
+                    int percent = total > 0
+                            ? (int) Math.min(100, downloaded * 100 / total) : 0;
+                    if (percent == lastPercent[0]) return;
+                    lastPercent[0] = percent;
+                    runOnUiThread(() -> {
+                        gridAdapter.setDownloadProgress(source, item, percent);
+                        setStatus("Getting " + displayName + " • " + percent + "%");
+                        if (callback != null) callback.onProgress(percent);
                     });
-                }
-                WallpaperStore.include(this, file);
-                if (!addOnly) WallpaperStore.select(this, file);
+                });
+                WallpaperStore.removeFromSlideshow(this, file);
                 sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                         .setPackage(getPackageName()));
-                boolean active = isWallpaperActive();
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
-                    gridAdapter.refreshLibraryState(active);
-                    if (addOnly) {
-                        setStatus("Added " + displayName + " to the slideshow.");
-                        Toast.makeText(this, "Added to slideshow", Toast.LENGTH_SHORT).show();
-                    } else if (active) {
-                        setStatus("Now showing " + displayName
-                                + ". Other included wallpapers remain in the slideshow.");
-                        Toast.makeText(this, "Now showing • slideshow unchanged",
-                                Toast.LENGTH_SHORT).show();
-                    } else {
-                        setStatus("Added " + displayName
-                                + " to the slideshow. Tap Setup needed to enable Deckscape.");
-                        Toast.makeText(this, "Added to slideshow • setup still needed",
-                                Toast.LENGTH_SHORT).show();
-                    }
+                    gridAdapter.refreshLibraryState(isWallpaperActive());
+                    setStatus("Saved " + displayName
+                            + " to Library. Wallpaper and slideshow unchanged.");
+                    Toast.makeText(this, "Saved to Library • wallpaper unchanged",
+                            Toast.LENGTH_SHORT).show();
+                    if (callback != null) callback.onComplete(true);
                 });
             } catch (Exception exception) {
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
-                    setStatus("Could not apply wallpaper: " + readableMessage(exception));
+                    setStatus("Could not get wallpaper: " + readableMessage(exception));
                     Toast.makeText(this, readableMessage(exception), Toast.LENGTH_LONG).show();
+                    if (callback != null) callback.onComplete(false);
+                });
+            }
+        });
+    }
+
+    /** Includes an on-device original in the slideshow and makes it current. */
+    private void setWallpaper(RepositorySource source, CatalogItem item,
+                              WallpaperPreviewDialog.ActionCallback callback) {
+        String displayName = WallpaperStore.displayName(item.name);
+        File file = WallpaperStore.installedFile(this, source, item);
+        if (file == null) {
+            Toast.makeText(this, "Choose Get before setting this wallpaper.",
+                    Toast.LENGTH_SHORT).show();
+            if (callback != null) callback.onComplete(false);
+            return;
+        }
+        setStatus("Setting " + displayName + "…");
+        io.execute(() -> {
+            try {
+                WallpaperStore.include(this, file);
+                WallpaperStore.select(this, file);
+                sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                        .setPackage(getPackageName()));
+                runOnUiThread(() -> {
+                    boolean active = isWallpaperActive();
+                    gridAdapter.refreshLibraryState(active);
+                    if (active) {
+                        setStatus("Now showing " + displayName
+                                + ". Other included wallpapers remain in the slideshow.");
+                        Toast.makeText(this, "Now showing • added to slideshow",
+                                Toast.LENGTH_SHORT).show();
+                    } else {
+                        setStatus("Selected " + displayName
+                                + ". Tap Setup needed to enable Deckscape.");
+                        Toast.makeText(this, "Selected • setup still needed",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                    if (callback != null) callback.onComplete(true);
+                });
+            } catch (Exception exception) {
+                runOnUiThread(() -> {
+                    setStatus("Could not set wallpaper: " + readableMessage(exception));
+                    Toast.makeText(this, readableMessage(exception), Toast.LENGTH_LONG).show();
+                    if (callback != null) callback.onComplete(false);
                 });
             }
         });
@@ -804,7 +863,22 @@ public final class MainActivity extends Activity {
         TextView explanation = Ui.text(this, "", 13, Ui.MUTED);
         explanation.setMaxLines(2);
         panel.addView(explanation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 50)));
+
+        LinearLayout groups = new LinearLayout(this);
+        groups.setOrientation(LinearLayout.HORIZONTAL);
+        Button allGroup = Ui.button(this, "All", false);
+        Button dayGroup = Ui.button(this, "Day", false);
+        Button nightGroup = Ui.button(this, "Night", false);
+        Button[] groupButtons = {allGroup, dayGroup, nightGroup};
+        for (int index = 0; index < groupButtons.length; index++) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    0, Ui.dp(this, 42), 1f);
+            if (index > 0) params.leftMargin = Ui.dp(this, 8);
+            groups.addView(groupButtons[index], params);
+        }
+        panel.addView(groups, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 46)));
 
         FrameLayout content = new FrameLayout(this);
         GridView slideshow = new GridView(this);
@@ -826,16 +900,18 @@ public final class MainActivity extends Activity {
         slideshow.setEmptyView(empty);
 
         SlideshowGridAdapter[] adapterHolder = new SlideshowGridAdapter[1];
+        Runnable[] refreshHolder = new Runnable[1];
         SlideshowGridAdapter adapter = new SlideshowGridAdapter(
                 this, previewCache, new SlideshowGridAdapter.Listener() {
             @Override
-            public void onShowNow(File file) {
+            public void onSet(File file) {
                 try {
+                    WallpaperStore.include(MainActivity.this, file);
                     WallpaperStore.select(MainActivity.this, file);
-                    refreshWallpaperLibrary(adapterHolder[0], explanation);
+                    refreshHolder[0].run();
                     setStatus("Now showing " + WallpaperStore.displayName(file)
-                            + ". Other included wallpapers remain in the slideshow.");
-                    Toast.makeText(MainActivity.this, "Wallpaper changed • slideshow unchanged",
+                            + ". It is included in the slideshow.");
+                    Toast.makeText(MainActivity.this, "Now showing • added to slideshow",
                             Toast.LENGTH_SHORT).show();
                 } catch (Exception exception) {
                     showWallpaperLibraryError(exception);
@@ -848,7 +924,7 @@ public final class MainActivity extends Activity {
                     if (included) WallpaperStore.include(MainActivity.this, file);
                     else WallpaperStore.removeFromSlideshow(MainActivity.this, file);
                     boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
-                    refreshWallpaperLibrary(adapterHolder[0], explanation);
+                    refreshHolder[0].run();
                     String name = WallpaperStore.displayName(file);
                     int count = adapterHolder[0].includedCount();
                     if (included) {
@@ -873,16 +949,47 @@ public final class MainActivity extends Activity {
             }
 
             @Override
+            public void onCycleRole(File file, DayNightRole currentRole) {
+                DayNightRole nextRole = currentRole.next();
+                WallpaperProfileStore profiles = new WallpaperProfileStore(MainActivity.this);
+                profiles.put(file, profiles.get(file).withRole(nextRole));
+                boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
+                refreshHolder[0].run();
+                String name = WallpaperStore.displayName(file);
+                setStatus(name + " is now " + nextRole.label + ".");
+                Toast.makeText(MainActivity.this, nextRole.label,
+                        Toast.LENGTH_SHORT).show();
+                if (scheduleDisabled) showScheduleDisabledMessage();
+            }
+
+            @Override
             public void onOptions(File file) {
-                showWallpaperOptions(file,
-                        () -> refreshWallpaperLibrary(adapterHolder[0], explanation));
+                showWallpaperOptions(file, refreshHolder[0]);
             }
         });
         adapterHolder[0] = adapter;
+        refreshHolder[0] = () -> refreshWallpaperLibrary(adapterHolder[0], explanation,
+                allGroup, dayGroup, nightGroup, empty);
+        allGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.ALL);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
+        dayGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.DAY);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
+        nightGroup.setOnClickListener(view -> {
+            adapter.setGroup(LibraryGroup.NIGHT);
+            updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
+            updateSlideshowSummary(explanation, adapter);
+        });
         updateSlideshowSummary(explanation, adapter);
+        updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
         slideshow.setAdapter(adapter);
         panel.addView(content, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 360)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 350)));
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
@@ -905,23 +1012,56 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation) {
+    private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation,
+                                         Button allGroup, Button dayGroup, Button nightGroup,
+                                         TextView empty) {
         sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                 .setPackage(getPackageName()));
         adapter.refresh();
         updateSlideshowSummary(explanation, adapter);
+        updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
         gridAdapter.refreshLibraryState(isWallpaperActive());
     }
 
     private void updateSlideshowSummary(TextView explanation, SlideshowGridAdapter adapter) {
-        int downloaded = adapter.getCount();
+        int downloaded = adapter.downloadedCount();
         int included = adapter.includedCount();
         String summary = downloaded == 0
-                ? "Download a wallpaper to add it to this device and the slideshow."
+                ? "Use Get to save wallpapers on this device. Choose Set or Add when you "
+                + "want one in the slideshow."
                 : included + " of " + downloaded + " downloaded wallpaper"
-                + (downloaded == 1 ? " is" : "s are") + " in the slideshow. "
-                + "Remove keeps the file; Delete removes it from this device.";
+                + (downloaded == 1 ? "" : "s") + (included == 1 ? " is" : " are")
+                + " in the slideshow. "
+                + (adapter.group() == LibraryGroup.ALL
+                ? "Remove keeps the file; Delete removes it from this device."
+                : adapter.group().label + " view shows " + adapter.getCount()
+                + "; Both wallpapers appear in Day and Night.");
         explanation.setText(summary);
+    }
+
+    private void updateLibraryGroupControls(SlideshowGridAdapter adapter,
+                                            Button allGroup, Button dayGroup,
+                                            Button nightGroup, TextView empty) {
+        styleLibraryGroupButton(allGroup, LibraryGroup.ALL, adapter);
+        styleLibraryGroupButton(dayGroup, LibraryGroup.DAY, adapter);
+        styleLibraryGroupButton(nightGroup, LibraryGroup.NIGHT, adapter);
+        if (adapter.downloadedCount() == 0) {
+            empty.setText(R.string.library_empty);
+        } else {
+            empty.setText(getString(R.string.library_group_empty,
+                    adapter.group().label.toUpperCase(Locale.ROOT)));
+        }
+    }
+
+    private void styleLibraryGroupButton(Button button, LibraryGroup group,
+                                         SlideshowGridAdapter adapter) {
+        boolean selected = adapter.group() == group;
+        button.setText(getString(R.string.library_group_count,
+                group.label, adapter.groupCount(group)));
+        button.setTextColor(selected ? Ui.NAV : Ui.TEXT);
+        button.setBackground(Ui.rounded(selected ? Ui.CYAN : Ui.SURFACE_HIGH,
+                Ui.dp(this, 10), selected ? Ui.CYAN : Ui.DIVIDER,
+                Ui.dp(this, selected ? 2 : 1)));
     }
 
     private void confirmWallpaperDeletion(File file, Runnable onConfirmed) {
@@ -957,7 +1097,7 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public void onShowNow(File selected) {
+            public void onSetNow(File selected) {
                 try {
                     WallpaperStore.include(MainActivity.this, selected);
                     WallpaperStore.select(MainActivity.this, selected);
@@ -1020,105 +1160,26 @@ public final class MainActivity extends Activity {
                 Toast.LENGTH_LONG).show();
     }
 
-    /** Opens a cached, bandwidth-saving preview without downloading or selecting the original. */
+    /** Opens a cached preview with explicit Get and Set actions for the original. */
     private void showWallpaperPreview(CatalogItem item) {
         RepositorySource source = activeSource;
         if (source == null) return;
+        PreviewSequence sequence = new PreviewSequence(
+                gridAdapter.visibleItemsSnapshot(), item);
+        new WallpaperPreviewDialog(this, previewCache, source, sequence,
+                new WallpaperPreviewDialog.Listener() {
+                    @Override
+                    public void onGet(CatalogItem selected,
+                                      WallpaperPreviewDialog.ActionCallback callback) {
+                        getWallpaper(source, selected, callback);
+                    }
 
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 18),
-                Ui.dp(this, 22), Ui.dp(this, 12));
-
-        String displayName = WallpaperStore.displayName(item.name);
-        TextView title = Ui.title(this, displayName, 20);
-        title.setSingleLine(true);
-        title.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
-        panel.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 38)));
-
-        String note = item.isGif()
-                ? "Animated preview • original GIF is cached temporarily for playback"
-                : "Optimised 16:9 preview • original downloads only when you choose Download";
-        TextView description = Ui.text(this, note, 12, Ui.MUTED);
-        panel.addView(description, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
-
-        FrameLayout previewFrame = new FrameLayout(this);
-        previewFrame.setBackground(Ui.rounded(Ui.BACKGROUND, Ui.dp(this, 12),
-                Ui.DIVIDER, Ui.dp(this, 1)));
-        previewFrame.setClipToOutline(true);
-
-        ImageView image = null;
-        AnimatedGifView animation = null;
-        if (item.isGif()) {
-            animation = new AnimatedGifView(this);
-            animation.setContentDescription("Animated preview of " + displayName);
-            previewFrame.addView(animation, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        } else {
-            image = new ImageView(this);
-            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            image.setContentDescription("Preview of " + displayName);
-            previewFrame.addView(image, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        }
-
-        TextView loading = Ui.title(this, "LOADING PREVIEW", 12);
-        loading.setTextColor(Ui.MUTED);
-        loading.setGravity(Gravity.CENTER);
-        previewFrame.addView(loading, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout.LayoutParams frameParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 420));
-        frameParams.topMargin = Ui.dp(this, 8);
-        panel.addView(previewFrame, frameParams);
-
-        LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        Button close = Ui.button(this, "Close", false);
-        actions.addView(close, new LinearLayout.LayoutParams(
-                Ui.dp(this, 104), Ui.dp(this, 46)));
-        panel.addView(actions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
-
-        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
-        close.setOnClickListener(view -> dialog.dismiss());
-        dialog.setOnShowListener(ignored -> {
-            styleDialog(dialog);
-            Window window = dialog.getWindow();
-            if (window != null) {
-                int available = getResources().getDisplayMetrics().widthPixels - Ui.dp(this, 48);
-                window.setLayout(Math.min(available, Ui.dp(this, 900)),
-                        ViewGroup.LayoutParams.WRAP_CONTENT);
-            }
-        });
-        dialog.show();
-
-        if (item.isGif()) {
-            AnimatedGifView target = animation;
-            previewCache.requestGif(source, item, (movie, error) -> {
-                if (!dialog.isShowing()) return;
-                if (movie != null) {
-                    target.setMovie(movie);
-                    loading.setVisibility(View.GONE);
-                } else {
-                    loading.setText(error == null ? "GIF PREVIEW UNAVAILABLE" : error);
-                }
-            });
-        } else {
-            ImageView target = image;
-            previewCache.request(source, item, (bitmap, error) -> {
-                if (!dialog.isShowing()) return;
-                if (bitmap != null) {
-                    target.setImageBitmap(bitmap);
-                    loading.setVisibility(View.GONE);
-                } else {
-                    loading.setText(error == null ? "PREVIEW UNAVAILABLE" : error);
-                }
-            });
-        }
+                    @Override
+                    public void onSet(CatalogItem selected,
+                                      WallpaperPreviewDialog.ActionCallback callback) {
+                        setWallpaper(source, selected, callback);
+                    }
+                }).show();
     }
 
     private void activateWallpaper() {
@@ -1292,6 +1353,7 @@ public final class MainActivity extends Activity {
         settingsDayNightToggle = Ui.button(this, "", true);
         settingsDayNightToggle.setOnClickListener(view -> {
             if (dayNightSettings.isEnabled()) {
+                if (locationClient.isRequesting()) cancelAutomaticLocation(false);
                 dayNightSettings.setEnabled(false);
                 pendingEnableDayNight = false;
                 broadcastConfigurationChanged();
@@ -1305,15 +1367,15 @@ public final class MainActivity extends Activity {
 
         schedule.addView(settingsLabel("SCHEDULE METHOD"), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
-        Spinner mode = settingsSpinner(scheduleModeLabels());
-        mode.setSelection(dayNightSettings.mode().ordinal());
-        schedule.addView(mode, new LinearLayout.LayoutParams(
+        settingsScheduleMode = settingsSpinner(scheduleModeLabels());
+        settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
+        schedule.addView(settingsScheduleMode, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
         LinearLayout times = new LinearLayout(this);
         times.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout dayTime = timeControl("DAY BEGINS", dayNightSettings.dayMinute());
-        LinearLayout nightTime = timeControl("NIGHT BEGINS", dayNightSettings.nightMinute());
+        LinearLayout dayTime = timeControl(true, dayNightSettings.dayMinute());
+        LinearLayout nightTime = timeControl(false, dayNightSettings.nightMinute());
         times.addView(dayTime, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         LinearLayout.LayoutParams nightParams = new LinearLayout.LayoutParams(0,
@@ -1325,7 +1387,10 @@ public final class MainActivity extends Activity {
 
         settingsLocationButton = Ui.actionButton(this, "Refresh automatic location", false);
         settingsLocationButton.setSingleLine(true);
-        settingsLocationButton.setOnClickListener(view -> requestAutomaticLocation(false));
+        settingsLocationButton.setOnClickListener(view -> {
+            if (locationClient.isRequesting()) cancelAutomaticLocation(true);
+            else requestAutomaticLocation(false);
+        });
         schedule.addView(settingsLocationButton, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
@@ -1385,10 +1450,13 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         settingsDialog = dialog;
         boolean[] initializing = {true};
-        mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+        settingsScheduleMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 ScheduleMode selected = ScheduleMode.values()[position];
+                if (selected != ScheduleMode.AUTO && locationClient.isRequesting()) {
+                    cancelAutomaticLocation(false);
+                }
                 dayNightSettings.setMode(selected);
                 if (!initializing[0] && selected == ScheduleMode.AUTO
                         && dayNightSettings.isEnabled() && !hasAmbientLightSensor()
@@ -1425,9 +1493,17 @@ public final class MainActivity extends Activity {
         });
         done.setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
+            if (locationClient.isRequesting()) cancelAutomaticLocation(false);
             if (settingsDialog == dialog) settingsDialog = null;
             settingsDayNightToggle = null;
             settingsDayNightStatus = null;
+            settingsScheduleMode = null;
+            settingsDayTimeLabel = null;
+            settingsNightTimeLabel = null;
+            settingsDayTimeSpinner = null;
+            settingsNightTimeSpinner = null;
+            settingsDayCalculatedTime = null;
+            settingsNightCalculatedTime = null;
             settingsLocationButton = null;
         });
         dialog.show();
@@ -1469,27 +1545,48 @@ public final class MainActivity extends Activity {
         return spinner;
     }
 
-    private LinearLayout timeControl(String label, int selectedMinute) {
+    private LinearLayout timeControl(boolean day, int selectedMinute) {
         LinearLayout control = new LinearLayout(this);
         control.setOrientation(LinearLayout.VERTICAL);
-        control.addView(settingsLabel(label), new LinearLayout.LayoutParams(
+        TextView label = settingsLabel(getString(day
+                ? R.string.manual_day_begins : R.string.manual_night_begins));
+        if (day) settingsDayTimeLabel = label;
+        else settingsNightTimeLabel = label;
+        control.addView(label, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+
+        FrameLayout value = new FrameLayout(this);
         Spinner spinner = settingsSpinner(timeLabels());
+        if (day) settingsDayTimeSpinner = spinner;
+        else settingsNightTimeSpinner = spinner;
         spinner.setSelection(Math.floorMod(selectedMinute, 24 * 60) / 30);
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                int day = label.startsWith("DAY") ? position * 30 : dayNightSettings.dayMinute();
-                int night = label.startsWith("NIGHT") ? position * 30
-                        : dayNightSettings.nightMinute();
-                dayNightSettings.setManualTimes(day, night);
+                int dayMinute = day ? position * 30 : dayNightSettings.dayMinute();
+                int nightMinute = day ? dayNightSettings.nightMinute()
+                        : position * 30;
+                dayNightSettings.setManualTimes(dayMinute, nightMinute);
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
             }
 
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        control.addView(spinner, new LinearLayout.LayoutParams(
+        value.addView(spinner, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView calculated = Ui.text(this, "", 15, Ui.TEXT);
+        calculated.setGravity(Gravity.CENTER_VERTICAL);
+        calculated.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        calculated.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        calculated.setVisibility(View.GONE);
+        if (day) settingsDayCalculatedTime = calculated;
+        else settingsNightCalculatedTime = calculated;
+        value.addView(calculated, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        control.addView(value, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
         return control;
     }
@@ -1514,23 +1611,56 @@ public final class MainActivity extends Activity {
 
     private void requestAutomaticLocation(boolean enableAfter) {
         pendingEnableDayNight = enableAfter;
-        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},
-                    REQUEST_COARSE_LOCATION);
+        if (!hasUsableForegroundLocationPermission()) {
+            showLocationPermissionExplanation();
             return;
         }
-        resolveCoarseLocation();
+        resolveAutomaticLocation();
     }
 
-    private void resolveCoarseLocation() {
+    private void showLocationPermissionExplanation() {
+        AlertDialog explanation = new AlertDialog.Builder(this)
+                .setTitle(R.string.location_permission_title)
+                .setMessage(R.string.location_permission_message)
+                .setNegativeButton("Not now", (ignored, which) -> {
+                    boolean shouldEnable = pendingEnableDayNight;
+                    pendingEnableDayNight = false;
+                    refreshSettingsStatus();
+                    if (shouldEnable) {
+                        Toast.makeText(this,
+                                "Day & Night remains off. Choose Manual or enable GPS access.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setPositiveButton("Continue", (ignored, which) -> requestPermissions(
+                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION},
+                        REQUEST_FOREGROUND_LOCATION))
+                .create();
+        explanation.setOnCancelListener(ignored -> {
+            pendingEnableDayNight = false;
+            refreshSettingsStatus();
+        });
+        explanation.show();
+        styleDialog(explanation);
+    }
+
+    private boolean hasUsableForegroundLocationPermission() {
+        boolean fine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        boolean coarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+        return LocationPermissionPolicy.isSufficient(Build.VERSION.SDK_INT, fine, coarse);
+    }
+
+    private void resolveAutomaticLocation() {
         if (settingsLocationButton != null) {
-            settingsLocationButton.setText(R.string.finding_location);
-            settingsLocationButton.setEnabled(false);
+            settingsLocationButton.setText(R.string.cancel_location_search);
+            settingsLocationButton.setEnabled(true);
         }
         locationClient.request(new CoarseLocationClient.Callback() {
             @Override
-            public void onLocation(Location location) {
+            public void onLocation(Location location, boolean cached) {
                 dayNightSettings.setCoarseLocation(location.getLatitude(),
                         location.getLongitude(), location.getTime() > 0
                                 ? location.getTime() : System.currentTimeMillis());
@@ -1540,22 +1670,33 @@ public final class MainActivity extends Activity {
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
                 Toast.makeText(MainActivity.this,
-                        "Automatic sunrise and sunset times are ready.",
-                        Toast.LENGTH_SHORT).show();
+                        cached
+                                ? "Updated from a recent on-device location; no new GPS fix was needed."
+                                : "Location updated; today's sunrise and sunset are ready.",
+                        Toast.LENGTH_LONG).show();
             }
 
             @Override
             public void onError(String message) {
                 boolean shouldEnable = pendingEnableDayNight;
                 pendingEnableDayNight = false;
-                dayNightSettings.setMode(ScheduleMode.MANUAL);
-                if (shouldEnable) dayNightSettings.setEnabled(true);
-                broadcastConfigurationChanged();
                 refreshSettingsStatus();
-                Toast.makeText(MainActivity.this, message + ". Using manual times.",
+                Toast.makeText(MainActivity.this,
+                        shouldEnable ? message + ". Day & Night remains off." : message,
                         Toast.LENGTH_LONG).show();
             }
         });
+    }
+
+    private void cancelAutomaticLocation(boolean notify) {
+        if (!locationClient.isRequesting()) return;
+        locationClient.cancel();
+        pendingEnableDayNight = false;
+        refreshSettingsStatus();
+        if (notify) {
+            Toast.makeText(this, "Location search cancelled. Your schedule is unchanged.",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void refreshSettingsStatus() {
@@ -1572,7 +1713,7 @@ public final class MainActivity extends Activity {
         } else if (dayNightSettings.hasCoarseLocation()) {
             method = "Automatic on-device sunrise/sunset";
         } else {
-            method = "Automatic needs approximate location";
+            method = "Automatic needs location • manual times used for now";
         }
         settingsDayNightStatus.setText(getString(R.string.day_night_status,
                 dayNightSettings.isEnabled() ? "ON" : "OFF", phase.label,
@@ -1586,8 +1727,16 @@ public final class MainActivity extends Activity {
         settingsDayNightToggle.setBackground(Ui.rounded(dayNightSettings.isEnabled()
                         ? Ui.SURFACE_HIGH : Ui.CYAN, Ui.dp(this, 12),
                 dayNightSettings.isEnabled() ? Ui.CORAL : Ui.CYAN, Ui.dp(this, 1)));
+        if (settingsScheduleMode != null
+                && settingsScheduleMode.getSelectedItemPosition()
+                != dayNightSettings.mode().ordinal()) {
+            settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
+        }
+        refreshScheduleTimeControls();
         if (settingsLocationButton != null) {
-            if (dayNightSettings.hasCoarseLocation()) {
+            if (locationClient.isRequesting()) {
+                settingsLocationButton.setText(R.string.cancel_location_search);
+            } else if (dayNightSettings.hasCoarseLocation()) {
                 settingsLocationButton.setText(getString(R.string.refresh_location_saved,
                         android.text.format.DateFormat.format(
                                 "dd MMM", new Date(dayNightSettings.locationTime()))));
@@ -1596,6 +1745,46 @@ public final class MainActivity extends Activity {
             }
             settingsLocationButton.setEnabled(true);
             settingsLocationButton.setVisibility(hasAmbientLightSensor() ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private void refreshScheduleTimeControls() {
+        if (settingsDayTimeLabel == null || settingsNightTimeLabel == null
+                || settingsDayTimeSpinner == null || settingsNightTimeSpinner == null
+                || settingsDayCalculatedTime == null || settingsNightCalculatedTime == null) {
+            return;
+        }
+        boolean manual = dayNightSettings.mode() == ScheduleMode.MANUAL;
+        settingsDayTimeSpinner.setVisibility(manual ? View.VISIBLE : View.GONE);
+        settingsNightTimeSpinner.setVisibility(manual ? View.VISIBLE : View.GONE);
+        settingsDayCalculatedTime.setVisibility(manual ? View.GONE : View.VISIBLE);
+        settingsNightCalculatedTime.setVisibility(manual ? View.GONE : View.VISIBLE);
+        if (manual) {
+            settingsDayTimeLabel.setText(R.string.manual_day_begins);
+            settingsNightTimeLabel.setText(R.string.manual_night_begins);
+            return;
+        }
+        if (hasAmbientLightSensor()) {
+            settingsDayTimeLabel.setText(R.string.automatic_control);
+            settingsNightTimeLabel.setText(R.string.fixed_times);
+            settingsDayCalculatedTime.setText(R.string.ambient_light);
+            settingsNightCalculatedTime.setText(R.string.not_used);
+            return;
+        }
+        settingsDayTimeLabel.setText(R.string.todays_sunrise);
+        settingsNightTimeLabel.setText(R.string.todays_sunset);
+        DayPhaseResolver.SolarTimes times = dayNightSettings.solarTimes(
+                System.currentTimeMillis());
+        if (times == null) {
+            int unavailable = dayNightSettings.hasCoarseLocation()
+                    ? R.string.solar_time_unavailable : R.string.location_needed;
+            settingsDayCalculatedTime.setText(unavailable);
+            settingsNightCalculatedTime.setText(unavailable);
+        } else {
+            settingsDayCalculatedTime.setText(
+                    DayPhaseResolver.formatMinute(times.sunriseMinute));
+            settingsNightCalculatedTime.setText(
+                    DayPhaseResolver.formatMinute(times.sunsetMinute));
         }
     }
 
@@ -1642,20 +1831,22 @@ public final class MainActivity extends Activity {
 
         String message = AppMetadata.versionLabel() + "\n"
                 + "Landscape wallpapers for Android head units\n\n"
-                + "Created by Paul Hepple / MetalHepple and released under the MIT Licence.\n"
-                + "No accounts, advertising, analytics or tracking. Approximate location is used "
-                + "only on-device when you enable automatic Day & Night scheduling.";
+                + "Created by Paul Hepple (@MetalHepple) and released under the MIT Licence.\n"
+                + "No accounts, advertising, analytics or tracking. A one-time foreground "
+                + "location fix is rounded and kept only on-device when you enable automatic "
+                + "Day & Night scheduling.";
         TextView copy = Ui.text(this, message, 13, Ui.MUTED);
         copy.setLineSpacing(Ui.dp(this, 3), 1f);
         panel.addView(copy, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 128)));
 
-        TextView contributors = Ui.text(this, contributorsSummary(aboutMetadata), 13, Ui.TEXT);
+        LinearLayout contributors = new LinearLayout(this);
+        contributors.setOrientation(LinearLayout.HORIZONTAL);
         contributors.setPadding(Ui.dp(this, 14), Ui.dp(this, 8),
                 Ui.dp(this, 14), Ui.dp(this, 8));
         contributors.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 10),
                 Ui.DIVIDER, Ui.dp(this, 1)));
-        contributors.setLineSpacing(Ui.dp(this, 2), 1f);
+        renderContributors(contributors, aboutMetadata);
         panel.addView(contributors, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 76)));
 
@@ -1687,8 +1878,7 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         infoDialog = dialog;
         licences.setOnClickListener(view -> showLicences());
-        source.setOnClickListener(view -> openExternal(
-                "https://github.com/MetalHepple/Deckscape"));
+        source.setOnClickListener(view -> openExternal(AppMetadata.REPOSITORY_URL));
         support.setOnClickListener(view -> openExternal("https://ko-fi.com/metalhepple"));
         check.setOnClickListener(view -> {
             if (updateState != null && updateState.release != null) {
@@ -1710,27 +1900,146 @@ public final class MainActivity extends Activity {
             RepositoryMetadata loaded = metadataClient.load(new ArrayList<>(sources));
             runOnUiThread(() -> {
                 aboutMetadata = loaded;
-                if (dialog.isShowing()) contributors.setText(contributorsSummary(loaded));
+                if (dialog.isShowing()) {
+                    renderContributors(contributors, loaded);
+                    loadContributorAvatars(contributors, loaded, dialog);
+                }
             });
         });
     }
 
-    private String contributorsSummary(RepositoryMetadata metadata) {
-        if (metadata == null) return "CONTRIBUTORS  •  Loading from GitHub…";
-        if (metadata.contributors.isEmpty()) {
-            return "CONTRIBUTORS  •  MetalHepple\nGitHub contributor data is unavailable offline.";
+    /** Rebuilds the contributor strip with friendly, deduplicated profile chips. */
+    private void renderContributors(LinearLayout panel, RepositoryMetadata metadata) {
+        panel.removeAllViews();
+        TextView heading = Ui.title(this, metadata != null && metadata.stale
+                ? "CONTRIBUTORS\nSAVED OFFLINE" : "CONTRIBUTORS", 10);
+        heading.setTextColor(metadata != null && metadata.stale ? Ui.MUTED : Ui.CYAN);
+        heading.setGravity(Gravity.CENTER_VERTICAL);
+        panel.addView(heading, new LinearLayout.LayoutParams(
+                Ui.dp(this, 138), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(true);
+        LinearLayout people = new LinearLayout(this);
+        people.setOrientation(LinearLayout.HORIZONTAL);
+        people.setGravity(Gravity.CENTER_VERTICAL);
+        scroll.addView(people, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        if (metadata == null) {
+            TextView loading = Ui.text(this, "Loading from GitHub…", 13, Ui.MUTED);
+            loading.setGravity(Gravity.CENTER_VERTICAL);
+            people.addView(loading, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            return;
         }
-        StringBuilder value = new StringBuilder("CONTRIBUTORS  •  ");
-        for (int index = 0; index < metadata.contributors.size(); index++) {
-            if (index > 0) value.append("  ·  ");
-            RepositoryMetadata.Contributor contributor = metadata.contributors.get(index);
-            value.append(contributor.login);
-            if (contributor.contributions > 0) {
-                value.append(" (").append(contributor.contributions).append(')');
+
+        List<RepositoryMetadata.Contributor> values = contributorProfiles(metadata);
+        for (RepositoryMetadata.Contributor contributor : values) {
+            people.addView(contributorChip(contributor));
+        }
+    }
+
+    private View contributorChip(RepositoryMetadata.Contributor contributor) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setGravity(Gravity.CENTER_VERTICAL);
+        chip.setPadding(Ui.dp(this, 7), Ui.dp(this, 4),
+                Ui.dp(this, 12), Ui.dp(this, 4));
+        chip.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 24),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+
+        FrameLayout avatar = new FrameLayout(this);
+        TextView initial = Ui.title(this, contributor.displayName.substring(0, 1)
+                .toUpperCase(Locale.ROOT), 13);
+        initial.setGravity(Gravity.CENTER);
+        initial.setTextColor(Ui.NAV);
+        initial.setBackground(contributorAvatarBackground(Ui.CYAN));
+        avatar.addView(initial, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setBackground(contributorAvatarBackground(Ui.SURFACE_HIGH));
+        image.setClipToOutline(true);
+        image.setOutlineProvider(android.view.ViewOutlineProvider.BACKGROUND);
+        image.setVisibility(View.INVISIBLE);
+        image.setTag(contributorAvatarTag(contributor));
+        avatar.addView(image, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 38), Ui.dp(this, 38));
+        chip.addView(avatar, avatarParams);
+
+        TextView label = Ui.text(this, contributor.displayLabel(), 13, Ui.TEXT);
+        label.setSingleLine(true);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        labelParams.leftMargin = Ui.dp(this, 9);
+        chip.addView(label, labelParams);
+
+        LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(this, 50));
+        chipParams.rightMargin = Ui.dp(this, 8);
+        chip.setLayoutParams(chipParams);
+        if (!contributor.pageUrl.isEmpty()) {
+            chip.setClickable(true);
+            chip.setFocusable(true);
+            chip.setContentDescription("Open GitHub profile for " + contributor.displayLabel());
+            chip.setOnClickListener(view -> openExternal(contributor.pageUrl));
+        }
+        return chip;
+    }
+
+    private android.graphics.drawable.GradientDrawable contributorAvatarBackground(int color) {
+        android.graphics.drawable.GradientDrawable background =
+                new android.graphics.drawable.GradientDrawable();
+        background.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        background.setColor(color);
+        return background;
+    }
+
+    private static String contributorAvatarTag(RepositoryMetadata.Contributor contributor) {
+        return "contributor-avatar:" + contributor.login + ":" + contributor.pageUrl;
+    }
+
+    private static List<RepositoryMetadata.Contributor> contributorProfiles(
+            RepositoryMetadata metadata) {
+        List<RepositoryMetadata.Contributor> contributors =
+                new ArrayList<>(metadata.contributors);
+        if (contributors.isEmpty()) {
+            contributors.add(new RepositoryMetadata.Contributor(AppMetadata.CREATOR_NAME,
+                    AppMetadata.CREATOR_LOGIN, AppMetadata.CREATOR_URL,
+                    AppMetadata.CREATOR_AVATAR_URL));
+        }
+        return contributors;
+    }
+
+    /** Loads bounded profile images after labels are visible, retaining initials offline. */
+    private void loadContributorAvatars(LinearLayout panel, RepositoryMetadata metadata,
+                                        AlertDialog dialog) {
+        List<RepositoryMetadata.Contributor> contributors = contributorProfiles(metadata);
+        io.execute(() -> {
+            List<Bitmap> avatars = new ArrayList<>();
+            for (RepositoryMetadata.Contributor contributor : contributors) {
+                avatars.add(metadataClient.loadAvatar(contributor));
             }
-        }
-        if (metadata.stale) value.append("\nShowing saved GitHub metadata while offline.");
-        return value.toString();
+            runOnUiThread(() -> {
+                if (!dialog.isShowing()) return;
+                for (int index = 0; index < contributors.size(); index++) {
+                    Bitmap avatar = avatars.get(index);
+                    if (avatar == null) continue;
+                    ImageView target = panel.findViewWithTag(
+                            contributorAvatarTag(contributors.get(index)));
+                    if (target != null) {
+                        target.setImageBitmap(avatar);
+                        target.setVisibility(View.VISIBLE);
+                    }
+                }
+            });
+        });
     }
 
     /** Displays bundled legal text plus cached repository-level licence declarations. */

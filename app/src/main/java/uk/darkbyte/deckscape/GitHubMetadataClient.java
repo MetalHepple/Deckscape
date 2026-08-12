@@ -1,5 +1,8 @@
 package uk.darkbyte.deckscape;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -24,8 +27,15 @@ import java.util.Map;
 final class GitHubMetadataClient {
     private static final String API_BASE = "https://api.github.com";
     private static final int MAX_RESPONSE_BYTES = 512 * 1024;
+    private static final int MAX_CONTRIBUTORS = 24;
+    private static final int MAX_AVATAR_BYTES = 512 * 1024;
+    private static final int MAX_AVATAR_DIMENSION = 1_024;
+    private static final int AVATAR_DECODE_TARGET = 128;
+    private static final long AVATAR_CACHE_MAX_BYTES = 4L * 1024 * 1024;
+    private static final long AVATAR_CACHE_TARGET_BYTES = 3L * 1024 * 1024;
     private static final long CONTRIBUTORS_FRESH_MS = 24L * 60 * 60 * 1000;
     private static final long LICENSE_FRESH_MS = 7L * 24 * 60 * 60 * 1000;
+    private static final long AVATAR_FRESH_MS = 7L * 24 * 60 * 60 * 1000;
 
     private final File cacheDirectory;
 
@@ -73,17 +83,77 @@ final class GitHubMetadataClient {
 
     static List<RepositoryMetadata.Contributor> parseContributors(String json) throws Exception {
         JSONArray array = new JSONArray(json);
-        List<RepositoryMetadata.Contributor> result = new ArrayList<>();
+        List<RepositoryMetadata.Contributor> parsed = new ArrayList<>();
         for (int index = 0; index < array.length(); index++) {
             JSONObject item = array.getJSONObject(index);
-            String login = item.optString("login", item.optString("name", "")).trim();
+            String login = item.optString("login", "").trim();
+            String name = item.optString("name", "").trim();
+            String displayName = name.isEmpty() ? login : name;
             String type = item.optString("type", "");
-            if (login.isEmpty() || "Bot".equalsIgnoreCase(type)
+            if (displayName.isEmpty() || "Bot".equalsIgnoreCase(type)
                     || login.toLowerCase(Locale.ROOT).endsWith("[bot]")) continue;
             String page = item.optString("html_url", "");
-            if (!isAllowedGitHubPage(page)) page = "https://github.com/" + login;
-            result.add(new RepositoryMetadata.Contributor(login, page,
-                    Math.max(0, item.optInt("contributions", 0))));
+            if (!isAllowedGitHubPage(page)) {
+                page = login.isEmpty() ? "" : "https://github.com/" + login;
+            }
+            String avatar = item.optString("avatar_url", "");
+            if (!isAllowedAvatarUrl(avatar)) avatar = "";
+            parsed.add(new RepositoryMetadata.Contributor(displayName, login, page, avatar));
+        }
+        List<RepositoryMetadata.Contributor> merged = mergeCreatorAliases(parsed);
+        if (merged.size() <= MAX_CONTRIBUTORS) return merged;
+        return new ArrayList<>(merged.subList(0, MAX_CONTRIBUTORS));
+    }
+
+    /** Returns a validated avatar from the bounded disk cache or GitHub's avatar host. */
+    Bitmap loadAvatar(RepositoryMetadata.Contributor contributor) {
+        if (contributor == null || !isAllowedAvatarUrl(contributor.avatarUrl)) return null;
+        File cache = new File(cacheDirectory, sha256(contributor.avatarUrl) + ".avatar");
+        long age = cache.isFile() ? System.currentTimeMillis() - cache.lastModified()
+                : Long.MAX_VALUE;
+        if (age >= 0 && age < AVATAR_FRESH_MS) {
+            Bitmap cached = decodeAvatar(readBytesQuietly(cache));
+            if (cached != null) return cached;
+        }
+        try {
+            byte[] encoded = requestAvatar(contributor.avatarUrl);
+            Bitmap bitmap = decodeAvatar(encoded);
+            if (bitmap == null) throw new IOException("GitHub avatar could not be decoded");
+            writeBytes(cache, encoded);
+            pruneAvatarCache();
+            return bitmap;
+        } catch (IOException | RuntimeException ignored) {
+            return decodeAvatar(readBytesQuietly(cache));
+        }
+    }
+
+    private static List<RepositoryMetadata.Contributor> mergeCreatorAliases(
+            List<RepositoryMetadata.Contributor> contributors) {
+        RepositoryMetadata.Contributor account = null;
+        boolean foundCreator = false;
+        for (RepositoryMetadata.Contributor contributor : contributors) {
+            boolean creatorAccount = AppMetadata.CREATOR_LOGIN.equalsIgnoreCase(contributor.login);
+            boolean creatorName = contributor.login.isEmpty()
+                    && AppMetadata.CREATOR_NAME.equalsIgnoreCase(contributor.displayName);
+            if (!creatorAccount && !creatorName) continue;
+            foundCreator = true;
+            if (creatorAccount) account = contributor;
+        }
+        if (!foundCreator) return contributors;
+
+        String page = account == null ? "https://github.com/" + AppMetadata.CREATOR_LOGIN
+                : account.pageUrl;
+        String avatar = account == null || account.avatarUrl.isEmpty()
+                ? AppMetadata.CREATOR_AVATAR_URL : account.avatarUrl;
+        RepositoryMetadata.Contributor merged = new RepositoryMetadata.Contributor(
+                AppMetadata.CREATOR_NAME, AppMetadata.CREATOR_LOGIN, page, avatar);
+        List<RepositoryMetadata.Contributor> result = new ArrayList<>();
+        result.add(merged);
+        for (RepositoryMetadata.Contributor contributor : contributors) {
+            boolean creatorAccount = AppMetadata.CREATOR_LOGIN.equalsIgnoreCase(contributor.login);
+            boolean creatorName = contributor.login.isEmpty()
+                    && AppMetadata.CREATOR_NAME.equalsIgnoreCase(contributor.displayName);
+            if (!creatorAccount && !creatorName) result.add(contributor);
         }
         return result;
     }
@@ -144,6 +214,32 @@ final class GitHubMetadataClient {
         }
     }
 
+    private static byte[] requestAvatar(String url) throws IOException {
+        if (!isAllowedAvatarUrl(url)) throw new IOException("Unsafe GitHub avatar URL");
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(30_000);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("Accept", "image/*");
+        connection.setRequestProperty("User-Agent", AppMetadata.userAgent());
+        try {
+            int status = connection.getResponseCode();
+            if (!isAllowedAvatarUrl(connection.getURL().toString())) {
+                throw new IOException("GitHub avatar redirected outside its image host");
+            }
+            String type = connection.getContentType();
+            if (status != HttpURLConnection.HTTP_OK || type == null
+                    || !type.toLowerCase(Locale.ROOT).startsWith("image/")) {
+                throw new IOException("GitHub returned an invalid avatar response");
+            }
+            int declared = connection.getContentLength();
+            if (declared > MAX_AVATAR_BYTES) throw new IOException("GitHub avatar is too large");
+            return readBytes(connection.getInputStream(), MAX_AVATAR_BYTES);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
     private static String readFile(File file) throws IOException {
         try (FileInputStream input = new FileInputStream(file)) {
             return readUtf8(input);
@@ -165,6 +261,49 @@ final class GitHubMetadataClient {
         }
     }
 
+    private static byte[] readBytes(InputStream input, int maximumBytes) throws IOException {
+        try (InputStream closeable = input;
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8 * 1024];
+            int total = 0;
+            int read;
+            while ((read = closeable.read(buffer)) != -1) {
+                total += read;
+                if (total > maximumBytes) throw new IOException("Image is too large");
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
+
+    private static byte[] readBytesQuietly(File file) {
+        if (file == null || !file.isFile() || file.length() > MAX_AVATAR_BYTES) return null;
+        try {
+            return readBytes(new FileInputStream(file), MAX_AVATAR_BYTES);
+        } catch (IOException ignored) {
+            return null;
+        }
+    }
+
+    private static Bitmap decodeAvatar(byte[] encoded) {
+        if (encoded == null || encoded.length == 0 || encoded.length > MAX_AVATAR_BYTES) {
+            return null;
+        }
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(encoded, 0, encoded.length, bounds);
+        if (bounds.outWidth < 1 || bounds.outHeight < 1
+                || bounds.outWidth > MAX_AVATAR_DIMENSION
+                || bounds.outHeight > MAX_AVATAR_DIMENSION) return null;
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = 1;
+        while (bounds.outWidth / (options.inSampleSize * 2) >= AVATAR_DECODE_TARGET
+                && bounds.outHeight / (options.inSampleSize * 2) >= AVATAR_DECODE_TARGET) {
+            options.inSampleSize *= 2;
+        }
+        return BitmapFactory.decodeByteArray(encoded, 0, encoded.length, options);
+    }
+
     private static void writeFile(File file, String value) throws IOException {
         File partial = new File(file.getAbsolutePath() + ".part");
         try {
@@ -179,6 +318,38 @@ final class GitHubMetadataClient {
         } catch (IOException exception) {
             partial.delete();
             throw exception;
+        }
+    }
+
+    private static void writeBytes(File file, byte[] value) throws IOException {
+        File partial = new File(file.getAbsolutePath() + ".part");
+        try {
+            try (FileOutputStream output = new FileOutputStream(partial)) {
+                output.write(value);
+                output.getFD().sync();
+            }
+            if (file.exists() && !file.delete()) {
+                throw new IOException("Unable to refresh avatar metadata");
+            }
+            if (!partial.renameTo(file)) throw new IOException("Unable to finish avatar cache");
+        } catch (IOException exception) {
+            partial.delete();
+            throw exception;
+        }
+    }
+
+    private void pruneAvatarCache() {
+        File[] files = cacheDirectory.listFiles((directory, name) -> name.endsWith(".avatar"));
+        if (files == null) return;
+        long total = 0;
+        for (File file : files) total += Math.max(0, file.length());
+        if (total <= AVATAR_CACHE_MAX_BYTES) return;
+        java.util.Arrays.sort(files, (left, right) ->
+                Long.compare(left.lastModified(), right.lastModified()));
+        for (File file : files) {
+            long length = Math.max(0, file.length());
+            if (file.delete()) total -= length;
+            if (total <= AVATAR_CACHE_TARGET_BYTES) break;
         }
     }
 
@@ -201,6 +372,20 @@ final class GitHubMetadataClient {
                     && "github.com".equalsIgnoreCase(uri.getHost())
                     && uri.getRawUserInfo() == null
                     && (uri.getPort() == -1 || uri.getPort() == 443);
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    static boolean isAllowedAvatarUrl(String value) {
+        try {
+            URI uri = URI.create(value);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && "avatars.githubusercontent.com".equalsIgnoreCase(uri.getHost())
+                    && uri.getRawUserInfo() == null
+                    && (uri.getPort() == -1 || uri.getPort() == 443)
+                    && uri.getRawPath() != null
+                    && uri.getRawPath().matches("/u/[0-9]+/?");
         } catch (RuntimeException exception) {
             return false;
         }

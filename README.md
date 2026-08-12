@@ -30,7 +30,7 @@ devices that support live wallpapers and allow APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.6.0.apk"><strong>Download Deckscape 1.6.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.0.apk"><strong>Download Deckscape 1.7.0 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -78,7 +78,7 @@ open Deckscape and activate its live wallpaper again.
   </tr>
   <tr>
     <td align="center"><strong>Touch-controlled crop and zoom</strong></td>
-    <td align="center"><strong>Visible Day & Night assignments</strong></td>
+    <td align="center"><strong>Grouped Day & Night library</strong></td>
   </tr>
   <tr>
     <td><img src="docs/images/deckscape-settings.png" alt="Deckscape day and night settings"></td>
@@ -99,23 +99,29 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Seven curated catalogs, with support for additional public GitHub repositories.
 - Image-backed folder categories plus an optional recursive **All wallpapers** view.
 - JPEG, PNG, WebP, and animated GIF wallpapers.
-- One-touch downloads with progress shown inside the selected card.
-- Separate **Preview** and **Download** controls, with previews cached on-device.
+- Explicit **Get** and **Set** actions: Get stores the original without changing
+  the wallpaper or slideshow; Set includes an on-device image and shows it.
+- Download progress is shown inside the selected card or Preview action.
+- Tap a wallpaper image or its **Preview** control to open a cached preview,
+  then browse the current folder or search results with large previous/next
+  controls and Get/Set actions.
 - Animated GIFs play inside the in-app preview before installation.
 - Clear **On device**, **In slideshow**, **Ready**, and **Now showing** states.
-- Independent **Add**, **Remove**, and confirmed **Delete** library controls.
+- Independent **Set**, **Add**, **Remove**, and confirmed **Delete** library
+  controls, with All, Day, and Night views.
 - Per-wallpaper **Fill**, **Fit**, **Stretch**, and touch-controlled **Custom crop**.
 - One global display default for wallpapers without a custom choice.
 - Optional Day & Night roles with automatic or manual changeover.
 - Ambient-light scheduling on equipped devices, with local sunrise/sunset as a
-  privacy-preserving fallback from one-time approximate location.
+  privacy-preserving fallback from a one-time foreground fix that is immediately
+  rounded and kept only on-device.
 - Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
-- Cached public GitHub contributors and repository-level licence summaries.
+- Friendly public GitHub contributor profiles with cached avatars, plus
+  repository-level licence summaries.
 - Bounded network, disk, decoder, and memory use suitable for head units.
-- No account, analytics, advertising, precise/background location, or storage
-  permission.
+- No account, analytics, advertising, background location, or storage permission.
 
 ## How previews work
 
@@ -131,21 +137,32 @@ saver can be disabled and the preview cache cleared from **Settings**.
 
 Opening an animated GIF preview fetches the validated original GIF within the
 12 MB animation limit and stores it in the same bounded temporary cache. It is
-not added to the slideshow unless **Download** is selected.
+not added to the local library unless **Get** is selected, and Get alone does
+not change the wallpaper or slideshow.
+
+Previous and next navigation follows a snapshot of the currently visible
+wallpapers, including the active search filter, and skips category folders.
 
 See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
 
 ## Using the slideshow
 
-Every wallpaper you download is included in the slideshow automatically.
-**Show** changes the image currently displayed without removing any of the
-other included wallpapers. **Remove** takes an image out of rotation while
-keeping the download on the device; **Add** restores it without another
-download. **Delete** permanently removes the downloaded file after confirmation.
+**Get** downloads a wallpaper into Deckscape's private library without changing
+the display or rotation. **Set** includes that on-device image in the slideshow
+and makes it current without removing any other included wallpapers. **Remove**
+takes an image out of rotation while keeping the download on the device;
+**Add** restores it without another download. **Delete** permanently removes
+the downloaded file after confirmation.
 
 Use **Library** in the top bar to see the complete downloaded set, manage its
-slideshow membership, and identify the current image. The adjacent status pill
+slideshow membership, and identify the current image. Its **All**, **Day**, and
+**Night** views group assigned images without changing their stored roles;
+**Both** images intentionally appear in Day and Night. The adjacent status pill
 opens Deckscape's one-time activation guide when setup is needed.
+
+For quick assignment, tap a wallpaper's role badge in Library to cycle
+**Both → Day → Night → Both**. Use **Options** when you want to choose a role
+directly alongside its display settings.
 
 ## Display and Day & Night options
 
@@ -159,12 +176,16 @@ including animated GIFs.
 The same panel can assign a wallpaper to **Both**, **Day**, or **Night**. Turn
 the feature on from **Settings** after both periods have an eligible wallpaper.
 In **Automatic** mode Deckscape uses the device's ambient-light sensor when one
-exists. Otherwise it can request approximate location once and calculate local
-sunrise and sunset on the device; the rounded coordinate is never sent to a
-Deckscape server. Choose **Manual times** to avoid location entirely or set a
-fixed schedule.
+exists. Otherwise it requests one foreground location fix and calculates local
+sunrise and sunset on the device. Older or non-Google head units can require
+Android's precise GPS permission to obtain that fix, but Deckscape immediately
+rounds it to 0.1 degrees, discards the precise result, and never sends the saved
+area to a server. Settings shows today's calculated sunrise and sunset as
+read-only times in Automatic mode; editable fixed times appear only after
+choosing **Manual times**. The one-minute search is cancellable. Choose Manual
+mode to avoid location entirely or set a fixed schedule.
 
-Manual **Show now** choices are respected until the next normal slideshow
+Manual **Set now** choices are respected until the next normal slideshow
 interval. If removing or deleting a wallpaper empties either period, Day &
 Night turns off safely instead of leaving the live wallpaper without a choice.
 
