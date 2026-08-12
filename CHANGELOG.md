@@ -3,7 +3,7 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
-## [Unreleased]
+## [1.7.0] - 2026-08-12
 
 ### Added
 
@@ -209,6 +209,7 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
+[1.7.0]: https://github.com/MetalHepple/Deckscape/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/MetalHepple/Deckscape/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/MetalHepple/Deckscape/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/MetalHepple/Deckscape/compare/v1.3.0...v1.4.0
