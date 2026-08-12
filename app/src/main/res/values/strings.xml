@@ -16,6 +16,16 @@
     <string name="cancel_location_search">Cancel location search</string>
     <string name="location_permission_title">Allow a one-time GPS fix?</string>
     <string name="location_permission_message">Automatic sunrise and sunset needs one foreground location fix. Older and non-Google head units may require Android\'s precise GPS permission, but Deckscape immediately rounds the result to an approximate area, stores it only on this device, and stops location access. It never requests background location.</string>
+    <string name="manual_day_begins">DAY BEGINS</string>
+    <string name="manual_night_begins">NIGHT BEGINS</string>
+    <string name="automatic_control">AUTOMATIC CONTROL</string>
+    <string name="fixed_times">FIXED TIMES</string>
+    <string name="ambient_light">Ambient light</string>
+    <string name="not_used">Not used</string>
+    <string name="todays_sunrise">TODAY\'S SUNRISE</string>
+    <string name="todays_sunset">TODAY\'S SUNSET</string>
+    <string name="location_needed">Location needed</string>
+    <string name="solar_time_unavailable">Unavailable today</string>
     <string name="day_night_status">%1$s  •  %2$s now\n%3$s / %4$s  •  %5$s</string>
     <plurals name="day_wallpapers">
         <item quantity="one">%1$d day wallpaper</item>

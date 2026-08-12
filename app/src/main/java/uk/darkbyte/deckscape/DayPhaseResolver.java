@@ -26,14 +26,21 @@ final class DayPhaseResolver {
     }
 
     static DayPhase solar(Instant now, ZoneId zone, double latitude, double longitude) {
-        LocalDate localDate = ZonedDateTime.ofInstant(now, zone).toLocalDate();
-        SolarEvents events = solarEvents(localDate, latitude, longitude);
+        SolarEvents events = alignedSolarEvents(now, zone, latitude, longitude);
         if (events == null) return null;
-        Instant sunrise = alignToLocalDate(events.sunrise, localDate, zone);
-        Instant sunset = alignToLocalDate(events.sunset, localDate, zone);
-        if (!sunset.isAfter(sunrise)) sunset = sunset.plusSeconds(86_400);
-        return !now.isBefore(sunrise) && now.isBefore(sunset)
+        return !now.isBefore(events.sunrise) && now.isBefore(events.sunset)
                 ? DayPhase.DAY : DayPhase.NIGHT;
+    }
+
+    /** Returns today's calculated sunrise and sunset as local minutes after midnight. */
+    static SolarTimes solarTimes(Instant now, ZoneId zone,
+                                 double latitude, double longitude) {
+        SolarEvents events = alignedSolarEvents(now, zone, latitude, longitude);
+        if (events == null) return null;
+        ZonedDateTime sunrise = ZonedDateTime.ofInstant(events.sunrise, zone);
+        ZonedDateTime sunset = ZonedDateTime.ofInstant(events.sunset, zone);
+        return new SolarTimes(sunrise.getHour() * 60 + sunrise.getMinute(),
+                sunset.getHour() * 60 + sunset.getMinute());
     }
 
     /** Calculates official civil sunrise and sunset without sending location off-device. */
@@ -105,6 +112,18 @@ final class DayPhaseResolver {
         return Math.floorMod(value, 24 * 60);
     }
 
+    private static SolarEvents alignedSolarEvents(Instant now, ZoneId zone,
+                                                   double latitude, double longitude) {
+        if (now == null || zone == null) return null;
+        LocalDate localDate = ZonedDateTime.ofInstant(now, zone).toLocalDate();
+        SolarEvents events = solarEvents(localDate, latitude, longitude);
+        if (events == null) return null;
+        Instant sunrise = alignToLocalDate(events.sunrise, localDate, zone);
+        Instant sunset = alignToLocalDate(events.sunset, localDate, zone);
+        if (!sunset.isAfter(sunrise)) sunset = sunset.plusSeconds(86_400);
+        return new SolarEvents(sunrise, sunset);
+    }
+
     private static Instant alignToLocalDate(Instant value, LocalDate date, ZoneId zone) {
         Instant result = value;
         LocalDate resultDate = ZonedDateTime.ofInstant(result, zone).toLocalDate();
@@ -127,6 +146,17 @@ final class DayPhaseResolver {
         SolarEvents(Instant sunrise, Instant sunset) {
             this.sunrise = sunrise;
             this.sunset = sunset;
+        }
+    }
+
+    /** Local clock times used by the Settings summary for today's solar schedule. */
+    static final class SolarTimes {
+        final int sunriseMinute;
+        final int sunsetMinute;
+
+        SolarTimes(int sunriseMinute, int sunsetMinute) {
+            this.sunriseMinute = normalizeMinute(sunriseMinute);
+            this.sunsetMinute = normalizeMinute(sunsetMinute);
         }
     }
 }

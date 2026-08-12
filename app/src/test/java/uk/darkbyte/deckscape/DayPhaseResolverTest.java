@@ -9,6 +9,7 @@ import java.time.ZoneId;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 /** Covers manual boundaries, solar events, and polar fallback behaviour. */
 public class DayPhaseResolverTest {
@@ -40,6 +41,37 @@ public class DayPhaseResolverTest {
                 Instant.parse("2026-06-21T12:00:00Z"), LONDON, 51.5, -0.1));
         assertEquals(DayPhase.NIGHT, DayPhaseResolver.solar(
                 Instant.parse("2026-06-21T00:00:00Z"), LONDON, 51.5, -0.1));
+    }
+
+    @Test
+    public void solarTimesUseTheSameLocalBoundariesAsPhaseResolution() {
+        Instant midday = Instant.parse("2026-08-12T12:00:00Z");
+        DayPhaseResolver.SolarTimes times = DayPhaseResolver.solarTimes(
+                midday, LONDON, 51.5, -0.1);
+
+        assertNotNull(times);
+        assertTrue(times.sunriseMinute >= 5 * 60 && times.sunriseMinute < 6 * 60);
+        assertTrue(times.sunsetMinute >= 20 * 60 && times.sunsetMinute < 21 * 60);
+        Instant sunrise = LocalDate.of(2026, 8, 12).atStartOfDay(LONDON)
+                .plusMinutes(times.sunriseMinute).toInstant();
+        Instant sunset = LocalDate.of(2026, 8, 12).atStartOfDay(LONDON)
+                .plusMinutes(times.sunsetMinute).toInstant();
+        assertEquals(DayPhase.NIGHT, DayPhaseResolver.solar(
+                sunrise.minusSeconds(60), LONDON, 51.5, -0.1));
+        assertEquals(DayPhase.DAY, DayPhaseResolver.solar(
+                sunrise.plusSeconds(60), LONDON, 51.5, -0.1));
+        assertEquals(DayPhase.DAY, DayPhaseResolver.solar(
+                sunset.minusSeconds(60), LONDON, 51.5, -0.1));
+        assertEquals(DayPhase.NIGHT, DayPhaseResolver.solar(
+                sunset.plusSeconds(60), LONDON, 51.5, -0.1));
+        assertEquals(DayPhase.DAY, DayPhaseResolver.solar(
+                midday, LONDON, 51.5, -0.1));
+    }
+
+    @Test
+    public void solarTimesReturnNullWhenNoEventExists() {
+        assertNull(DayPhaseResolver.solarTimes(Instant.parse("2026-06-21T12:00:00Z"),
+                ZoneId.of("UTC"), 89, 0));
     }
 
     @Test

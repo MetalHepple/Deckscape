@@ -100,6 +100,15 @@ final class DayNightSettings {
         return preferences.getLong(KEY_LOCATION_TIME, 0);
     }
 
+    /** Returns today's local solar boundaries from the same inputs used by the engine. */
+    DayPhaseResolver.SolarTimes solarTimes(long nowMillis) {
+        if (!hasCoarseLocation()) return null;
+        double latitude = preferences.getInt(KEY_LATITUDE_TENTHS, 0) / 10.0;
+        double longitude = preferences.getInt(KEY_LONGITUDE_TENTHS, 0) / 10.0;
+        return DayPhaseResolver.solarTimes(Instant.ofEpochMilli(nowMillis),
+                ZoneId.systemDefault(), latitude, longitude);
+    }
+
     DayPhase currentPhase(long nowMillis, DayPhase sensorPhase) {
         Instant now = Instant.ofEpochMilli(nowMillis);
         ZoneId zone = ZoneId.systemDefault();

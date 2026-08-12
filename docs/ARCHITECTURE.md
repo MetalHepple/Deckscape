@@ -119,7 +119,9 @@ requested explicitly from Settings. Android 11 and older require fine foreground
 access because non-Google head units may expose GPS without a functional network
 provider; Android 12 and newer accepts the user's approximate choice. The result
 is immediately rounded to 0.1 degrees and used by `DayPhaseResolver` for
-on-device solar calculations.
+on-device solar calculations. Settings reads today's boundaries from that same
+resolver and presents them as read-only sunrise/sunset values; the manual time
+spinners are shown only when Manual mode is selected.
 
 `CoarseLocationClient` checks fused, network, GPS, and passive providers, accepts
 only a fix from the last 24 hours immediately, and permits a fix up to seven days

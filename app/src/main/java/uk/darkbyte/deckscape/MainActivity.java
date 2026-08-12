@@ -107,6 +107,12 @@ public final class MainActivity extends Activity {
     private Button settingsDayNightToggle;
     private TextView settingsDayNightStatus;
     private Spinner settingsScheduleMode;
+    private TextView settingsDayTimeLabel;
+    private TextView settingsNightTimeLabel;
+    private Spinner settingsDayTimeSpinner;
+    private Spinner settingsNightTimeSpinner;
+    private TextView settingsDayCalculatedTime;
+    private TextView settingsNightCalculatedTime;
     private Button settingsLocationButton;
     private boolean pendingEnableDayNight;
     private AlertDialog infoDialog;
@@ -1231,8 +1237,8 @@ public final class MainActivity extends Activity {
 
         LinearLayout times = new LinearLayout(this);
         times.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout dayTime = timeControl("DAY BEGINS", dayNightSettings.dayMinute());
-        LinearLayout nightTime = timeControl("NIGHT BEGINS", dayNightSettings.nightMinute());
+        LinearLayout dayTime = timeControl(true, dayNightSettings.dayMinute());
+        LinearLayout nightTime = timeControl(false, dayNightSettings.nightMinute());
         times.addView(dayTime, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         LinearLayout.LayoutParams nightParams = new LinearLayout.LayoutParams(0,
@@ -1355,6 +1361,12 @@ public final class MainActivity extends Activity {
             settingsDayNightToggle = null;
             settingsDayNightStatus = null;
             settingsScheduleMode = null;
+            settingsDayTimeLabel = null;
+            settingsNightTimeLabel = null;
+            settingsDayTimeSpinner = null;
+            settingsNightTimeSpinner = null;
+            settingsDayCalculatedTime = null;
+            settingsNightCalculatedTime = null;
             settingsLocationButton = null;
         });
         dialog.show();
@@ -1396,27 +1408,48 @@ public final class MainActivity extends Activity {
         return spinner;
     }
 
-    private LinearLayout timeControl(String label, int selectedMinute) {
+    private LinearLayout timeControl(boolean day, int selectedMinute) {
         LinearLayout control = new LinearLayout(this);
         control.setOrientation(LinearLayout.VERTICAL);
-        control.addView(settingsLabel(label), new LinearLayout.LayoutParams(
+        TextView label = settingsLabel(getString(day
+                ? R.string.manual_day_begins : R.string.manual_night_begins));
+        if (day) settingsDayTimeLabel = label;
+        else settingsNightTimeLabel = label;
+        control.addView(label, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+
+        FrameLayout value = new FrameLayout(this);
         Spinner spinner = settingsSpinner(timeLabels());
+        if (day) settingsDayTimeSpinner = spinner;
+        else settingsNightTimeSpinner = spinner;
         spinner.setSelection(Math.floorMod(selectedMinute, 24 * 60) / 30);
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                int day = label.startsWith("DAY") ? position * 30 : dayNightSettings.dayMinute();
-                int night = label.startsWith("NIGHT") ? position * 30
-                        : dayNightSettings.nightMinute();
-                dayNightSettings.setManualTimes(day, night);
+                int dayMinute = day ? position * 30 : dayNightSettings.dayMinute();
+                int nightMinute = day ? dayNightSettings.nightMinute()
+                        : position * 30;
+                dayNightSettings.setManualTimes(dayMinute, nightMinute);
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
             }
 
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        control.addView(spinner, new LinearLayout.LayoutParams(
+        value.addView(spinner, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        TextView calculated = Ui.text(this, "", 15, Ui.TEXT);
+        calculated.setGravity(Gravity.CENTER_VERTICAL);
+        calculated.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        calculated.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 10),
+                Ui.DIVIDER, Ui.dp(this, 1)));
+        calculated.setVisibility(View.GONE);
+        if (day) settingsDayCalculatedTime = calculated;
+        else settingsNightCalculatedTime = calculated;
+        value.addView(calculated, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        control.addView(value, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
         return control;
     }
@@ -1501,9 +1534,9 @@ public final class MainActivity extends Activity {
                 refreshSettingsStatus();
                 Toast.makeText(MainActivity.this,
                         cached
-                                ? "Automatic times are ready from a recent on-device location."
-                                : "Automatic sunrise and sunset times are ready.",
-                        Toast.LENGTH_SHORT).show();
+                                ? "Updated from a recent on-device location; no new GPS fix was needed."
+                                : "Location updated; today's sunrise and sunset are ready.",
+                        Toast.LENGTH_LONG).show();
             }
 
             @Override
@@ -1562,6 +1595,7 @@ public final class MainActivity extends Activity {
                 != dayNightSettings.mode().ordinal()) {
             settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
         }
+        refreshScheduleTimeControls();
         if (settingsLocationButton != null) {
             if (locationClient.isRequesting()) {
                 settingsLocationButton.setText(R.string.cancel_location_search);
@@ -1574,6 +1608,46 @@ public final class MainActivity extends Activity {
             }
             settingsLocationButton.setEnabled(true);
             settingsLocationButton.setVisibility(hasAmbientLightSensor() ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    private void refreshScheduleTimeControls() {
+        if (settingsDayTimeLabel == null || settingsNightTimeLabel == null
+                || settingsDayTimeSpinner == null || settingsNightTimeSpinner == null
+                || settingsDayCalculatedTime == null || settingsNightCalculatedTime == null) {
+            return;
+        }
+        boolean manual = dayNightSettings.mode() == ScheduleMode.MANUAL;
+        settingsDayTimeSpinner.setVisibility(manual ? View.VISIBLE : View.GONE);
+        settingsNightTimeSpinner.setVisibility(manual ? View.VISIBLE : View.GONE);
+        settingsDayCalculatedTime.setVisibility(manual ? View.GONE : View.VISIBLE);
+        settingsNightCalculatedTime.setVisibility(manual ? View.GONE : View.VISIBLE);
+        if (manual) {
+            settingsDayTimeLabel.setText(R.string.manual_day_begins);
+            settingsNightTimeLabel.setText(R.string.manual_night_begins);
+            return;
+        }
+        if (hasAmbientLightSensor()) {
+            settingsDayTimeLabel.setText(R.string.automatic_control);
+            settingsNightTimeLabel.setText(R.string.fixed_times);
+            settingsDayCalculatedTime.setText(R.string.ambient_light);
+            settingsNightCalculatedTime.setText(R.string.not_used);
+            return;
+        }
+        settingsDayTimeLabel.setText(R.string.todays_sunrise);
+        settingsNightTimeLabel.setText(R.string.todays_sunset);
+        DayPhaseResolver.SolarTimes times = dayNightSettings.solarTimes(
+                System.currentTimeMillis());
+        if (times == null) {
+            int unavailable = dayNightSettings.hasCoarseLocation()
+                    ? R.string.solar_time_unavailable : R.string.location_needed;
+            settingsDayCalculatedTime.setText(unavailable);
+            settingsNightCalculatedTime.setText(unavailable);
+        } else {
+            settingsDayCalculatedTime.setText(
+                    DayPhaseResolver.formatMinute(times.sunriseMinute));
+            settingsNightCalculatedTime.setText(
+                    DayPhaseResolver.formatMinute(times.sunsetMinute));
         }
     }
 

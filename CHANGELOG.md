@@ -19,6 +19,10 @@ versioning, and public Android `versionCode` values increase once per release.
   cancel action while searching.
 - Location denial, cancellation, and timeout preserve the chosen schedule mode;
   the visible Automatic/Manual selector no longer disagrees with saved state.
+- Automatic scheduling now shows today's calculated sunrise and sunset as
+  read-only times. The editable fallback fields appear only in Manual mode.
+- Reusing a recent on-device location now explicitly says that a new GPS fix
+  was unnecessary.
 - About now presents each GitHub contributor as one friendly profile, including
   a cached profile image and a direct profile link.
 - The creator's anonymous and GitHub-linked commit identities are merged into

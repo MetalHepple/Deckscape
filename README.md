@@ -169,8 +169,10 @@ exists. Otherwise it requests one foreground location fix and calculates local
 sunrise and sunset on the device. Older or non-Google head units can require
 Android's precise GPS permission to obtain that fix, but Deckscape immediately
 rounds it to 0.1 degrees, discards the precise result, and never sends the saved
-area to a server. The one-minute search is cancellable. Choose **Manual times**
-to avoid location entirely or set a fixed schedule.
+area to a server. Settings shows today's calculated sunrise and sunset as
+read-only times in Automatic mode; editable fixed times appear only after
+choosing **Manual times**. The one-minute search is cancellable. Choose Manual
+mode to avoid location entirely or set a fixed schedule.
 
 Manual **Show now** choices are respected until the next normal slideshow
 interval. If removing or deleting a wallpaper empties either period, Day &
