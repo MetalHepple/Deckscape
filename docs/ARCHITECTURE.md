@@ -107,7 +107,10 @@ or rotation. **Set** removes the exclusion, updates the current filename and a
 manual-override flag, and does not remove other files. The Library panel reads
 the same state, generates bounded local previews through the shared preview
 cache, and filters its view by stored Both/Day/Night roles. Both-role files
-appear in each scheduled view without being duplicated on disk.
+appear in each scheduled view without being duplicated on disk. Each Library
+role badge is backed by a 48dp focusable touch target and cycles through the
+three roles in a deterministic order; saving triggers the same group refresh
+and incomplete-schedule safety check as the full Options panel.
 
 When Day & Night is enabled, `DayNightSettings` filters included files by their
 roles. Both period pools must remain non-empty. `WallpaperEngineService`

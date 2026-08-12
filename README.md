@@ -160,6 +160,10 @@ slideshow membership, and identify the current image. Its **All**, **Day**, and
 **Both** images intentionally appear in Day and Night. The adjacent status pill
 opens Deckscape's one-time activation guide when setup is needed.
 
+For quick assignment, tap a wallpaper's role badge in Library to cycle
+**Both → Day → Night → Both**. Use **Options** when you want to choose a role
+directly alongside its display settings.
+
 ## Display and Day & Night options
 
 Open **Options** on any downloaded wallpaper to choose how it fills the screen.

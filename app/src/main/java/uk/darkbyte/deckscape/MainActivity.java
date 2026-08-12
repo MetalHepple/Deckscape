@@ -949,6 +949,20 @@ public final class MainActivity extends Activity {
             }
 
             @Override
+            public void onCycleRole(File file, DayNightRole currentRole) {
+                DayNightRole nextRole = currentRole.next();
+                WallpaperProfileStore profiles = new WallpaperProfileStore(MainActivity.this);
+                profiles.put(file, profiles.get(file).withRole(nextRole));
+                boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
+                refreshHolder[0].run();
+                String name = WallpaperStore.displayName(file);
+                setStatus(name + " is now " + nextRole.label + ".");
+                Toast.makeText(MainActivity.this, nextRole.label,
+                        Toast.LENGTH_SHORT).show();
+                if (scheduleDisabled) showScheduleDisabledMessage();
+            }
+
+            @Override
             public void onOptions(File file) {
                 showWallpaperOptions(file, refreshHolder[0]);
             }

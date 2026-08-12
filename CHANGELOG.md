@@ -21,6 +21,8 @@ versioning, and public Android `versionCode` values increase once per release.
 - **Get** now downloads to the on-device Library only. It does not select the
   wallpaper or add it to rotation; **Set** is the explicit include-and-show
   action in the catalogue, Preview, and Library.
+- Tapping a Library card's role badge now cycles **Both → Day → Night → Both**
+  and refreshes the grouped counts immediately.
 - Automatic sunrise/sunset now requests a reliable foreground GPS fix on older
   head units, allows up to one minute for a cold fix, and exposes an immediate
   cancel action while searching.

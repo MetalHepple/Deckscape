@@ -26,6 +26,8 @@ final class SlideshowGridAdapter extends BaseAdapter {
 
         void onSetIncluded(File file, boolean included);
 
+        void onCycleRole(File file, DayNightRole currentRole);
+
         void onOptions(File file);
     }
 
@@ -172,17 +174,26 @@ final class SlideshowGridAdapter extends BaseAdapter {
         imageFrame.addView(badge, badgeParams);
 
         TextView roleBadge = Ui.title(context,
-                profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name(), 9);
+                (profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name()) + "  ↻", 9);
         roleBadge.setTextColor(Ui.NAV);
         roleBadge.setGravity(Gravity.CENTER);
         roleBadge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
         roleBadge.setBackground(Ui.rounded(profile.role == DayNightRole.NIGHT
                         ? Ui.CORAL : Ui.CYAN, Ui.dp(context, 7)));
-        FrameLayout.LayoutParams roleParams = new FrameLayout.LayoutParams(
+        FrameLayout roleTarget = new FrameLayout(context);
+        roleTarget.setClickable(true);
+        roleTarget.setFocusable(true);
+        roleTarget.setContentDescription("Change " + WallpaperStore.displayName(file)
+                + " from " + profile.role.label + " to " + profile.role.next().label);
+        roleTarget.setOnClickListener(view -> listener.onCycleRole(file, profile.role));
+        FrameLayout.LayoutParams roleBadgeParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
-                Gravity.TOP | Gravity.END);
-        roleParams.setMargins(0, Ui.dp(context, 7), Ui.dp(context, 7), 0);
-        imageFrame.addView(roleBadge, roleParams);
+                Gravity.CENTER_VERTICAL | Gravity.END);
+        roleTarget.addView(roleBadge, roleBadgeParams);
+        FrameLayout.LayoutParams roleTargetParams = new FrameLayout.LayoutParams(
+                Ui.dp(context, 96), Ui.dp(context, 48), Gravity.TOP | Gravity.END);
+        roleTargetParams.setMargins(0, 0, Ui.dp(context, 7), 0);
+        imageFrame.addView(roleTarget, roleTargetParams);
 
         TextView title = Ui.title(context, WallpaperStore.displayName(file), 12);
         title.setSingleLine(true);

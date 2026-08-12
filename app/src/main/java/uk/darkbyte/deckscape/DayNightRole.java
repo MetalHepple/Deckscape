@@ -17,6 +17,19 @@ enum DayNightRole {
                 || (this == NIGHT && phase == DayPhase.NIGHT);
     }
 
+    /** Returns the next role used by the Library's quick-cycle control. */
+    DayNightRole next() {
+        switch (this) {
+            case BOTH:
+                return DAY;
+            case DAY:
+                return NIGHT;
+            case NIGHT:
+            default:
+                return BOTH;
+        }
+    }
+
     static DayNightRole parse(String value) {
         try {
             return value == null ? BOTH : valueOf(value);
