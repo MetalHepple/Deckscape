@@ -4,23 +4,12 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.Intent;
 import android.net.Uri;
-import android.provider.Settings;
 
 import java.io.File;
 
-/** Launches Android's trusted-source settings and user-confirmed package installer. */
+/** Hands a verified update to Android's user-confirmed package installer. */
 final class UpdateInstaller {
     private UpdateInstaller() {}
-
-    static boolean hasInstallPermission(Activity activity) {
-        return activity.getPackageManager().canRequestPackageInstalls();
-    }
-
-    static void requestInstallPermission(Activity activity) {
-        Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:" + activity.getPackageName()));
-        activity.startActivity(settings);
-    }
 
     static void install(Activity activity, File file) {
         if (!file.isFile() || !UpdateClient.UPDATE_FILE_NAME.equals(file.getName())) {
