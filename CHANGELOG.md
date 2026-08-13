@@ -3,6 +3,15 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [1.7.3] - 2026-08-13
+
+### Changed
+
+- Maintenance release that advances the public app version so installations on
+  1.7.2 can exercise the corrected GitHub download, signature verification, and
+  Android package-installer flow end to end.
+- Application behaviour is otherwise unchanged from 1.7.2.
+
 ## [1.7.2] - 2026-08-12
 
 ### Fixed
