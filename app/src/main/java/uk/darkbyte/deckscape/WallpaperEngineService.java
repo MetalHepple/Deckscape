@@ -26,7 +26,14 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Android live-wallpaper service that renders the selected image and performs timed rotation.
@@ -38,6 +45,7 @@ public final class WallpaperEngineService extends WallpaperService {
     static final String ACTION_LIBRARY_CHANGED = BuildConfig.APPLICATION_ID + ".LIBRARY_CHANGED";
     static final String PREFS = "wallpaper_preferences";
     static final String PREF_INTERVAL = "rotation_interval_ms";
+    static final String PREF_LAST_ENABLED_INTERVAL = "last_enabled_rotation_interval_ms";
     static final String PREF_CURRENT_FILE = "current_file";
     static final String PREF_LAST_SWITCH = "last_switch_ms";
     static final String PREF_DECODE_STATUS = "last_decode_status";
@@ -52,14 +60,28 @@ public final class WallpaperEngineService extends WallpaperService {
     }
 
     private final class GalleryEngine extends Engine {
+        private static final long WEATHER_FRESH_MILLIS = 60 * 60_000L;
+
         private final Handler handler = new Handler(Looper.getMainLooper());
         private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG
                 | Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
         private final Runnable drawRunnable = this::drawFrame;
         private final SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         private final DayNightSettings dayNight = new DayNightSettings(WallpaperEngineService.this);
+        private final SavedAreaSettings savedArea =
+                new SavedAreaSettings(WallpaperEngineService.this);
         private final WallpaperProfileStore profiles =
                 new WallpaperProfileStore(WallpaperEngineService.this);
+        private final OverlaySettings overlaySettings =
+                new OverlaySettings(WallpaperEngineService.this);
+        private final WeatherStore weatherStore = new WeatherStore(WallpaperEngineService.this);
+        private final WeatherClient weatherClient = new WeatherClient();
+        private final ExecutorService weatherExecutor = Executors.newSingleThreadExecutor();
+        private final ExecutorService vehicleExecutor = Executors.newSingleThreadExecutor();
+        private final VehicleTelemetryProvider vehicleProvider =
+                new OverdriveVehicleTelemetryProvider(WallpaperEngineService.this);
+        private final WallpaperOverlayRenderer overlayRenderer =
+                new WallpaperOverlayRenderer(WallpaperEngineService.this);
         private final AmbientLightTracker lightTracker = new AmbientLightTracker();
         private final SensorManager sensorManager =
                 (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -79,8 +101,18 @@ public final class WallpaperEngineService extends WallpaperService {
             }
         };
         private boolean visible;
+        private boolean destroyed;
         private boolean receiverRegistered;
         private boolean sensorRegistered;
+        private boolean vehicleProviderAvailable;
+        private EnumSet<OverlayWidget> enabledWidgets = EnumSet.noneOf(OverlayWidget.class);
+        private EnumMap<OverlayWidget, OverlayPlacement> overlayPlacements =
+                new EnumMap<>(OverlayWidget.class);
+        private WeatherSnapshot weatherSnapshot;
+        private VehicleTelemetrySnapshot vehicleSnapshot;
+        private Future<?> weatherRequest;
+        private Future<?> vehicleRequest;
+        private long lastVehicleAttemptMillis;
         private int surfaceWidth;
         private int surfaceHeight;
         private File loadedFile;
@@ -92,8 +124,15 @@ public final class WallpaperEngineService extends WallpaperService {
         private final BroadcastReceiver commands = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (ACTION_NEXT.equals(intent.getAction())) nextWallpaper();
-                else {
+                String action = intent.getAction();
+                if (ACTION_NEXT.equals(action)) {
+                    nextWallpaper();
+                } else if (Intent.ACTION_TIME_CHANGED.equals(action)
+                        || Intent.ACTION_TIMEZONE_CHANGED.equals(action)
+                        || Intent.ACTION_DATE_CHANGED.equals(action)) {
+                    drawSoon();
+                } else {
+                    reloadOverlayState();
                     updateLightSensor();
                     releaseDecoded();
                     drawSoon();
@@ -106,9 +145,13 @@ public final class WallpaperEngineService extends WallpaperService {
         public void onCreate(SurfaceHolder surfaceHolder) {
             super.onCreate(surfaceHolder);
             setOffsetNotificationsEnabled(false);
+            reloadOverlayState();
             IntentFilter filter = new IntentFilter();
             filter.addAction(ACTION_NEXT);
             filter.addAction(ACTION_LIBRARY_CHANGED);
+            filter.addAction(Intent.ACTION_TIME_CHANGED);
+            filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            filter.addAction(Intent.ACTION_DATE_CHANGED);
             if (Build.VERSION.SDK_INT >= 33) {
                 WallpaperEngineService.this.registerReceiver(
                         commands, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -121,9 +164,14 @@ public final class WallpaperEngineService extends WallpaperService {
         @Override
         public void onVisibilityChanged(boolean isVisible) {
             visible = isVisible;
+            reloadOverlayState();
             updateLightSensor();
             if (visible) drawSoon();
-            else handler.removeCallbacks(drawRunnable);
+            else {
+                handler.removeCallbacks(drawRunnable);
+                cancelWeatherRequest();
+                cancelVehicleRequest();
+            }
         }
 
         @Override
@@ -138,13 +186,20 @@ public final class WallpaperEngineService extends WallpaperService {
         public void onSurfaceDestroyed(SurfaceHolder holder) {
             visible = false;
             handler.removeCallbacks(drawRunnable);
+            cancelWeatherRequest();
+            cancelVehicleRequest();
             releaseDecoded();
             super.onSurfaceDestroyed(holder);
         }
 
         @Override
         public void onDestroy() {
+            destroyed = true;
             handler.removeCallbacks(drawRunnable);
+            cancelWeatherRequest();
+            cancelVehicleRequest();
+            weatherExecutor.shutdownNow();
+            vehicleExecutor.shutdownNow();
             unregisterLightSensor();
             releaseDecoded();
             if (receiverRegistered) {
@@ -166,18 +221,31 @@ public final class WallpaperEngineService extends WallpaperService {
             if (!visible) return;
             if (dayNight.disableIfIncomplete()) updateLightSensor();
             long now = System.currentTimeMillis();
-            DayPhase phase = dayNight.isEnabled()
+            if (!isPreview()) {
+                maybeRefreshWeather(now);
+                maybeRefreshVehicle(now);
+            }
+            long interval = preferences.getLong(PREF_INTERVAL, DEFAULT_INTERVAL);
+            File selected = WallpaperStore.selectedDownloaded(WallpaperEngineService.this);
+            boolean fixedSelection = !RotationPolicy.isSlideshowEnabled(interval)
+                    && selected != null;
+            DayPhase phase = !fixedSelection && dayNight.isEnabled()
                     ? dayNight.currentPhase(now, lightTracker.phase()) : null;
-            List<File> files = phase == null ? WallpaperStore.list(WallpaperEngineService.this)
+            List<File> files = fixedSelection
+                    ? Collections.singletonList(selected)
+                    : phase == null
+                    ? WallpaperStore.listDownloaded(WallpaperEngineService.this)
                     : dayNight.eligibleFiles(phase);
             if (files.isEmpty()) {
                 drawFallback("Choose a wallpaper in Deckscape");
+                handler.removeCallbacks(drawRunnable);
+                if (visible) handler.postDelayed(drawRunnable,
+                        WallpaperRedrawScheduler.staticDelayMillis(now,
+                                enabledWidgets.contains(OverlayWidget.CLOCK) && !isPreview()));
                 return;
             }
 
             long lastSwitch = preferences.getLong(PREF_LAST_SWITCH, 0);
-            long interval = preferences.getLong(PREF_INTERVAL, DEFAULT_INTERVAL);
-            File selected = WallpaperStore.selectedDownloaded(WallpaperEngineService.this);
             boolean manualOverride = preferences.getBoolean(PREF_MANUAL_OVERRIDE, false)
                     && selected != null;
             String savedPhase = preferences.getString(PREF_LAST_PHASE, "");
@@ -218,13 +286,17 @@ public final class WallpaperEngineService extends WallpaperService {
             if (!selected.equals(loadedFile)) load(selected);
             drawLoaded(selected.getName());
             handler.removeCallbacks(drawRunnable);
-            if (visible) handler.postDelayed(drawRunnable, movie != null ? 100L : 15_000L);
+            if (visible) handler.postDelayed(drawRunnable, movie != null ? 100L
+                    : WallpaperRedrawScheduler.staticDelayMillis(
+                    System.currentTimeMillis(), enabledWidgets.contains(OverlayWidget.CLOCK)
+                            && !isPreview()));
         }
 
         private void nextWallpaper() {
             DayPhase phase = dayNight.isEnabled()
                     ? dayNight.currentPhase(System.currentTimeMillis(), lightTracker.phase()) : null;
-            List<File> files = phase == null ? WallpaperStore.list(WallpaperEngineService.this)
+            List<File> files = phase == null
+                    ? WallpaperStore.listDownloaded(WallpaperEngineService.this)
                     : dayNight.eligibleFiles(phase);
             if (files.isEmpty()) return;
             File selected = WallpaperStore.selectedDownloaded(WallpaperEngineService.this);
@@ -303,6 +375,11 @@ public final class WallpaperEngineService extends WallpaperService {
                 } else {
                     drawText(canvas, "Unable to decode " + name);
                 }
+                if (!isPreview()) {
+                    overlayRenderer.draw(canvas, canvasWidth, canvasHeight, enabledWidgets,
+                            overlayPlacements, weatherSnapshot, vehicleSnapshot,
+                            System.currentTimeMillis());
+                }
             } finally {
                 if (canvas != null) holder.unlockCanvasAndPost(canvas);
             }
@@ -316,6 +393,11 @@ public final class WallpaperEngineService extends WallpaperService {
                 if (canvas == null) return;
                 canvas.drawColor(Color.rgb(7, 17, 27));
                 drawText(canvas, message);
+                if (!isPreview()) {
+                    overlayRenderer.draw(canvas, canvas.getWidth(), canvas.getHeight(),
+                            enabledWidgets, overlayPlacements, weatherSnapshot, vehicleSnapshot,
+                            System.currentTimeMillis());
+                }
             } finally {
                 if (canvas != null) holder.unlockCanvasAndPost(canvas);
             }
@@ -362,6 +444,117 @@ public final class WallpaperEngineService extends WallpaperService {
             }
             sensorRegistered = false;
             lightTracker.reset();
+        }
+
+        private void reloadOverlayState() {
+            enabledWidgets = overlaySettings.enabledWidgets();
+            vehicleProviderAvailable = vehicleProvider.isAvailable();
+            enabledWidgets.retainAll(OverlayWidget.availableWhen(vehicleProviderAvailable));
+            overlayPlacements = overlaySettings.placements();
+            weatherSnapshot = matchingStoredWeather();
+            vehicleSnapshot = VehicleTelemetryStore.latest();
+            if (!enabledWidgets.contains(OverlayWidget.WEATHER)) cancelWeatherRequest();
+            if (!vehicleProviderAvailable
+                    || overlaySettings.requestedVehicleMetrics().isEmpty()) {
+                cancelVehicleRequest();
+            }
+        }
+
+        private WeatherSnapshot matchingStoredWeather() {
+            if (!savedArea.hasLocation()) return null;
+            WeatherSnapshot stored = weatherStore.read();
+            return stored != null && stored.matches(savedArea.latitudeTenths(),
+                    savedArea.longitudeTenths()) ? stored : null;
+        }
+
+        private void maybeRefreshWeather(long nowMillis) {
+            if (!visible || !enabledWidgets.contains(OverlayWidget.WEATHER)
+                    || !savedArea.hasLocation()) return;
+            if (weatherSnapshot != null && weatherSnapshot.matches(
+                    savedArea.latitudeTenths(), savedArea.longitudeTenths())
+                    && nowMillis >= weatherSnapshot.fetchedAtMillis
+                    && nowMillis - weatherSnapshot.fetchedAtMillis < WEATHER_FRESH_MILLIS) {
+                return;
+            }
+            if (weatherRequest != null && !weatherRequest.isDone()) return;
+            int latitudeTenths = savedArea.latitudeTenths();
+            int longitudeTenths = savedArea.longitudeTenths();
+            if (!weatherStore.beginRefresh(latitudeTenths, longitudeTenths, nowMillis,
+                    WEATHER_FRESH_MILLIS)) return;
+            weatherRequest = weatherExecutor.submit(() -> {
+                try {
+                    WeatherSnapshot updated = weatherClient.fetch(latitudeTenths,
+                            longitudeTenths, System.currentTimeMillis());
+                    if (Thread.currentThread().isInterrupted()) return;
+                    weatherStore.save(updated);
+                    handler.post(() -> {
+                                if (destroyed || !visible
+                                        || !enabledWidgets.contains(OverlayWidget.WEATHER)
+                                || !savedArea.hasLocation()) return;
+                        if (!updated.matches(savedArea.latitudeTenths(),
+                                savedArea.longitudeTenths())) return;
+                        weatherSnapshot = updated;
+                        drawSoon();
+                    });
+                } catch (IOException exception) {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        Log.w(TAG, "Weather refresh failed: " + exception.getMessage());
+                    }
+                }
+            });
+        }
+
+        private void cancelWeatherRequest() {
+            weatherClient.cancel();
+            if (weatherRequest != null) weatherRequest.cancel(true);
+            weatherRequest = null;
+        }
+
+        private void maybeRefreshVehicle(long nowMillis) {
+            if (!visible || !vehicleProviderAvailable) return;
+            EnumSet<VehicleTelemetryMetric> metrics =
+                    overlaySettings.requestedVehicleMetrics();
+            if (metrics.isEmpty()) return;
+            if (vehicleSnapshot != null && vehicleSnapshot.isDisplayable(nowMillis)
+                    && nowMillis - vehicleSnapshot.fetchedAtMillis < 30_000L) {
+                return;
+            }
+            if (nowMillis >= lastVehicleAttemptMillis
+                    && nowMillis - lastVehicleAttemptMillis < 30_000L) return;
+            if (vehicleRequest != null && !vehicleRequest.isDone()) return;
+            lastVehicleAttemptMillis = nowMillis;
+            vehicleRequest = vehicleExecutor.submit(() -> {
+                try {
+                    VehicleTelemetrySnapshot updated = vehicleProvider.fetch(metrics,
+                            System.currentTimeMillis());
+                    if (Thread.currentThread().isInterrupted()) return;
+                    VehicleTelemetryStore.update(updated);
+                    handler.post(() -> {
+                        if (destroyed || !visible
+                                || overlaySettings.requestedVehicleMetrics().isEmpty()) return;
+                        vehicleSnapshot = updated;
+                        drawSoon();
+                    });
+                } catch (IOException exception) {
+                    if (!Thread.currentThread().isInterrupted()) {
+                        Log.w(TAG, "Local vehicle telemetry refresh failed");
+                        if (!vehicleProvider.isAvailable()) {
+                            handler.post(() -> {
+                                if (destroyed) return;
+                                vehicleProviderAvailable = false;
+                                enabledWidgets.retainAll(OverlayWidget.availableWhen(false));
+                                vehicleSnapshot = null;
+                                drawSoon();
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        private void cancelVehicleRequest() {
+            if (vehicleRequest != null) vehicleRequest.cancel(true);
+            vehicleRequest = null;
         }
 
         private void releaseDecoded() {

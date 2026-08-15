@@ -21,16 +21,20 @@ artwork. Repository folders become visual categories, previews are generated
 and cached on the device, and a selected static image or animated GIF is shown
 through Android's standard live-wallpaper service. Each download can be fitted,
 filled, stretched, or cropped for the display, and optional Day & Night pools
-can change the scene automatically.
+can change the scene automatically. Passive clock, weather, and optional
+vehicle-data cards can be drawn over the wallpaper when enabled.
 
-The interface is designed for touch-operated 16:9 Android head units, but the
-app contains no vehicle-maker APIs or branding. It can run on other Android 9+
-devices that support live wallpapers and allow APK installation.
+The interface is designed for touch-operated 16:9 Android head units. The core
+app remains vehicle-neutral and contains no vehicle-maker SDK, but an optional
+adapter can read BYD telemetry already collected by Overdrive on the same head
+unit. Those cards are branded with the installed Overdrive app's icon and are
+not offered when Overdrive is absent. Deckscape can run without them on other
+Android 9+ devices that support live wallpapers and APK installation.
 
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.7.3.apk"><strong>Download Deckscape 1.7.3 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.8.0.apk"><strong>Download Deckscape 1.8.0 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -106,21 +110,25 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - JPEG, PNG, WebP, and animated GIF wallpapers.
 - Explicit **Get** and **Set** actions: Get stores the original without changing
   the wallpaper or slideshow; Set includes an on-device image and shows it.
-- Download progress is shown inside the selected card or Preview action.
-- Tap a wallpaper image or its **Preview** control to open a cached preview,
-  then browse the current folder or search results with large previous/next
-  controls and Get/Set actions.
+- Download progress is shown inside the selected card's **Get** action.
+- Tap a wallpaper image to open a cached preview, then browse the current folder
+  or search results with large previous/next controls and one contextual
+  **Get** or **Set** action beside **Close**.
 - Animated GIFs play inside the in-app preview before installation.
-- Clear **On device**, **In slideshow**, **Ready**, and **Now showing** states.
-- Independent **Set**, **Add**, **Remove**, and confirmed **Delete** library
-  controls, with All, Day, and Night views.
+- Clear **On device**, **Selected**, and **Now showing** states distinguish a
+  saved wallpaper, an inactive selection, and the wallpaper currently displayed.
+- Consistent **Set**, confirmed **Delete**, and **Options** controls in Browse and
+  Library, with All, Day, and Night library views.
 - Per-wallpaper **Fill**, **Fit**, **Stretch**, and touch-controlled **Custom crop**.
 - One global display default for wallpapers without a custom choice.
 - Optional Day & Night roles with automatic or manual changeover.
 - Ambient-light scheduling on equipped devices, with local sunrise/sunset as a
-  privacy-preserving fallback from a one-time foreground fix that is immediately
-  rounded and kept only on-device.
-- Manual, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
+  privacy-preserving fallback from a foreground fix that is immediately rounded
+  into an approximate on-device saved area.
+- Off/keep-current, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
+- Optional non-interactive clock/date, current-weather, and Overdrive-powered
+  vehicle cards with independent drag placement, explicit provider labels, and
+  privacy disclosures.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
 - Friendly public GitHub contributor profiles with cached avatars, plus
@@ -153,21 +161,33 @@ See [PRIVACY.md](PRIVACY.md) for the exact network destinations and stored data.
 ## Using the slideshow
 
 **Get** downloads a wallpaper into Deckscape's private library without changing
-the display or rotation. **Set** includes that on-device image in the slideshow
-and makes it current without removing any other included wallpapers. **Remove**
-takes an image out of rotation while keeping the download on the device;
-**Add** restores it without another download. **Delete** permanently removes
-the downloaded file after confirmation.
+the current display. With Day & Night off, every download rotates; Manual
+assignment keeps a new download outside scheduled rotation until it is set, and
+Auto by brightness assigns and includes it automatically. **Set** includes an
+on-device image and makes it current without removing any other included
+wallpapers. **Delete** removes the downloaded file and its slideshow membership
+after confirmation.
 
-Use **Library** in the top bar to see the complete downloaded set, manage its
-slideshow membership, and identify the current image. Its **All**, **Day**, and
-**Night** views group assigned images without changing their stored roles;
+Use **Library** in the top bar to see the complete downloaded set, set or delete
+wallpapers, and identify the current image. Its **All**, **Day**, and **Night**
+views group assigned images without changing their stored roles;
 **Both** images intentionally appear in Day and Night. The adjacent status pill
 opens Deckscape's one-time activation guide when setup is needed.
 
-For quick assignment, tap a wallpaper's role badge in Library to cycle
-**Both → Day → Night → Both**. Use **Options** when you want to choose a role
-directly alongside its display settings.
+Use **Slideshow: off** in Library, or **Off – keep current** under the Settings
+slideshow interval, to keep the selected wallpaper fixed. Other downloads stay
+in Library and can be selected with **Set** at any time. Turning the slideshow
+back on restores the last timed interval.
+
+When Day & Night is off and the slideshow is on, every downloaded wallpaper
+participates in rotation; there is no separate slideshow subset. Day/Night
+filters, assignment badges, and role options remain hidden until the feature is
+turned on. With the slideshow off, the current selection also takes precedence
+over automatic Day/Night changes.
+
+For quick assignment, tap a downloaded wallpaper's role badge in Browse or
+Library to cycle **Both → Day → Night → Both**. Use **Options** when you want to
+choose a role directly alongside its display settings.
 
 ## Display and Day & Night options
 
@@ -178,17 +198,77 @@ live touch preview: drag to choose the focal point and use the slider to zoom.
 The same transform is used for the in-app preview and live wallpaper renderer,
 including animated GIFs.
 
-The same panel can assign a wallpaper to **Both**, **Day**, or **Night**. Turn
-the feature on from **Settings** after both periods have an eligible wallpaper.
+In **Manual** assignment, the same panel can assign a wallpaper to **Both**,
+**Day**, or **Night**. **Auto by brightness** instead measures a small
+downsample of every downloaded wallpaper entirely on the device, assigns the
+darker half to Night and the brighter half to Day, and shows the result as a
+read-only badge. A one-wallpaper library remains eligible for both periods.
+Turn the feature on from **Settings** after both periods have an eligible
+wallpaper.
 In **Automatic** mode Deckscape uses the device's ambient-light sensor when one
-exists. Otherwise it requests one foreground location fix and calculates local
-sunrise and sunset on the device. Older or non-Google head units can require
-Android's precise GPS permission to obtain that fix, but Deckscape immediately
-rounds it to 0.1 degrees, discards the precise result, and never sends the saved
-area to a server. Settings shows today's calculated sunrise and sunset as
-read-only times in Automatic mode; editable fixed times appear only after
-choosing **Manual times**. The one-minute search is cancellable. Choose Manual
+exists. Otherwise it calculates local sunrise and sunset from the shared saved
+area also used by Weather. Older or non-Google head units can require Android's
+precise GPS permission to obtain a fix, but Deckscape immediately rounds it to
+0.1 degrees and discards the precise result. The approximate area stays
+on-device unless the user separately enables Weather and accepts its Open-Meteo
+disclosure. Sunrise and sunset are recalculated for the current date whenever
+needed. An optional once-daily foreground check keeps the area current when
+Deckscape is opened; it can be switched off in Weather options. Choose Manual
 mode to avoid location entirely or set a fixed schedule.
+
+## Wallpaper widgets
+
+The top-bar **Widgets** control opens one workspace for both choosing and
+positioning passive clock/date, weather, and vehicle cards. A large 16:9 canvas
+uses the captured Home screen and live/cached values; enabled cards can be
+dragged directly there. A scrollable catalogue beside it shows a full live
+example and ON/OFF state for every available card, so adding more widget types
+does not shrink the canvas. Tap a catalogue card to toggle it. Cards snap into
+horizontal or vertical alignment with other enabled cards; **Snap: on/off**
+controls that help. Deckscape does not simulate vehicle controls or use a
+dashboard template; without a capture, the canvas uses the current wallpaper.
+The downloaded original is never modified, and the wallpaper cards have no
+touch controls. Android's wallpaper setup preview hides the cards so the user
+can inspect the unobstructed wallpaper before applying it.
+
+**Capture dashboard**, snapping, reset, and Done share a consistently sized top
+toolbar that remains clear of the car's bottom system bar. Android displays its
+screen-sharing consent prompt; after approval Deckscape hides all
+wallpaper cards, opens Home, waits three seconds, saves one frame in app-private
+storage, and restores the previous card states. The image is used only behind
+the drag editor, is never uploaded, and can be retaken or deleted there. A
+successful or failed capture returns to the same Widgets workspace; the
+completion notification is retained as a fallback for devices that refuse the
+automatic task switch. A 20-second recovery timer and next-launch check restore
+the prior card states if capture is interrupted. Everything visible on Home can
+appear in this private reference, so the confirmation screen explains the scope
+before Android asks.
+
+The clock uses only the device time and redraws on the exact device-minute
+boundary, including after device time, date, or time-zone changes. Weather is
+off by default and has a separate consent screen because it sends the shared
+0.1-degree saved area to
+[Open-Meteo](https://open-meteo.com/) over HTTPS. It refreshes at most hourly
+while the wallpaper is visible, keeps a small private offline cache, and stops
+network work when hidden. **Weather & location options** can manually update
+the area or turn the once-daily foreground check on or off. The card retains a
+short **Open-Meteo** attribution.
+See [PRIVACY.md](PRIVACY.md) for the exact disclosure and retention details.
+
+The three Overdrive-powered cards show battery (SOC, SOH, remaining kWh,
+range, 12 V voltage and charging), measured cabin/outdoor/pack temperatures,
+and four tyre pressures and temperatures. They are off by default and require
+the separately installed
+[Overdrive](https://github.com/yash-srivastava/Overdrive-release) app. Deckscape
+detects the package before offering the cards and displays the installed app's
+own icon; no copied Overdrive logo is bundled. It reads Overdrive's cached
+telemetry over `127.0.0.1` only while at least one vehicle card is enabled and
+the wallpaper is visible. It requests no BYD privilege, cannot control the
+vehicle, ignores unrelated telemetry fields, and keeps the latest accepted
+values in process memory only. Sleeping vehicles can honestly show unavailable
+cabin or outdoor sensors until Overdrive receives a reading.
+The provider choice, field mapping, and device findings are recorded in the
+[BYD/Overdrive telemetry investigation](docs/investigations/BYD_OVERDRIVE_TELEMETRY.md).
 
 Manual **Set now** choices are respected until the next normal slideshow
 interval. If removing or deleting a wallpaper empties either period, Day &

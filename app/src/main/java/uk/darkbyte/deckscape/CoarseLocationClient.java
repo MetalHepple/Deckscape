@@ -44,11 +44,11 @@ final class CoarseLocationClient {
         boolean fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
         if (!coarse && !fine) {
-            callback.onError("Foreground location permission is not enabled");
+            callback.onError("Location permission is not enabled");
             return;
         }
         if (manager == null) {
-            callback.onError("This head unit has no Android location service");
+            callback.onError("Location is unavailable on this device");
             return;
         }
 
@@ -64,7 +64,7 @@ final class CoarseLocationClient {
                 LocationFixPolicy.FALLBACK_CACHE_AGE_MS) ? best : null;
         if (providers.isEmpty()) {
             if (fallback != null) callback.onLocation(fallback, true);
-            else callback.onError("No Android location provider is available. Choose Manual times");
+            else callback.onError("No location source is available");
             return;
         }
 
@@ -94,14 +94,14 @@ final class CoarseLocationClient {
         if (!registered) {
             cancel();
             if (fallback != null) callback.onLocation(fallback, true);
-            else callback.onError("Android would not start a location request. Choose Manual times");
+            else callback.onError("Deckscape could not start the location request");
             return;
         }
         requesting = true;
         timeout = () -> {
             cancel();
             if (fallback != null) callback.onLocation(fallback, true);
-            else callback.onError("No GPS fix arrived within one minute. Try again outdoors or choose Manual times");
+            else callback.onError("No location was found within one minute. Try again with a clear view of the sky");
         };
         handler.postDelayed(timeout, LocationFixPolicy.REQUEST_TIMEOUT_MS);
     }

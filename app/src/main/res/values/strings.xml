@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Deckscape</string>
-    <string name="wallpaper_description">A landscape live-wallpaper gallery backed by user-selected GitHub repositories.</string>
+    <string name="wallpaper_description">Landscape live wallpaper with downloadable galleries, slideshows, Day &amp; Night, and optional widgets.</string>
     <string name="no_preview">NO PREVIEW</string>
     <string name="loading_preview">LOADING PREVIEW</string>
     <string name="preview_position">%1$d / %2$d</string>
@@ -13,9 +13,18 @@
     <string name="retry_update">Try again</string>
     <string name="checking_update">Checking…</string>
     <string name="downloading_update">Downloading…</string>
-    <string name="cancel_location_search">Cancel location search</string>
-    <string name="location_permission_title">Allow a one-time GPS fix?</string>
-    <string name="location_permission_message">Automatic sunrise and sunset needs one foreground location fix. Older and non-Google head units may require Android\'s precise GPS permission, but Deckscape immediately rounds the result to an approximate area, stores it only on this device, and stops location access. It never requests background location.</string>
+    <string name="cancel_location_search">Cancel location update</string>
+    <string name="location_permission_title">Allow location access?</string>
+    <string name="location_permission_message">Deckscape uses one location fix to calculate local sunrise and sunset times. Location access stops after the fix, and only an approximate location is stored on this device. Background location is never requested. Older or non-Google head units may require Android\'s precise permission so GPS can work; Deckscape discards the precise result immediately.</string>
+    <string name="shared_area_permission_message">Deckscape uses one location fix for local weather and sunrise and sunset times. Location access stops after the fix, and only an approximate location is stored on this device. Background location is never requested.</string>
+    <string name="weather_disclosure_title">Enable weather?</string>
+    <string name="weather_disclosure_message">Deckscape needs an approximate location to show local weather. It stores the location rounded to 0.1 degrees and can check it once a day when you open the app. Background location is never requested.
+
+While the wallpaper is visible, the approximate location is sent to api.open-meteo.com over HTTPS at most once per hour. Open-Meteo also receives ordinary network information such as your IP address and may retain server logs for up to 90 days. Weather data is provided by Open-Meteo under CC BY 4.0.</string>
+    <string name="weather_location_permission_message">Deckscape uses one location fix to set the area for local weather. Location access stops after the fix, and only a location rounded to 0.1 degrees is stored on this device. The approximate location is sent to Open-Meteo only after Weather is enabled. Background location is never requested. Older or non-Google head units may require Android\'s precise permission so GPS can work; Deckscape discards the precise result immediately.</string>
+    <string name="capture_dashboard">Capture dashboard</string>
+    <string name="widget_snap_on">Snap: on</string>
+    <string name="widget_snap_off">Snap: off</string>
     <string name="manual_day_begins">DAY BEGINS</string>
     <string name="manual_night_begins">NIGHT BEGINS</string>
     <string name="automatic_control">AUTOMATIC CONTROL</string>
@@ -27,6 +36,10 @@
     <string name="location_needed">Location needed</string>
     <string name="solar_time_unavailable">Unavailable today</string>
     <string name="day_night_status">%1$s  •  %2$s now\n%3$s / %4$s  •  %5$s</string>
+    <plurals name="day_night_off_library_status">
+        <item quantity="one">OFF • %1$d downloaded wallpaper\nAll downloaded wallpapers rotate.</item>
+        <item quantity="other">OFF • %1$d downloaded wallpapers\nAll downloaded wallpapers rotate.</item>
+    </plurals>
     <plurals name="day_wallpapers">
         <item quantity="one">%1$d day wallpaper</item>
         <item quantity="other">%1$d day wallpapers</item>
@@ -35,13 +48,15 @@
         <item quantity="one">%1$d night wallpaper</item>
         <item quantity="other">%1$d night wallpapers</item>
     </plurals>
-    <string name="refresh_location">Refresh automatic location</string>
-    <string name="refresh_location_saved">Refresh automatic location • saved %1$s</string>
+    <string name="update_saved_area">Update location</string>
+    <string name="update_saved_area_saved">Update location • %1$s</string>
     <string name="preview_unavailable">PREVIEW UNAVAILABLE</string>
-    <string name="action_set">Set</string>
     <string name="preview_getting">Getting…</string>
     <string name="preview_get_progress">Get • %1$d%%</string>
     <string name="preview_setting">Setting…</string>
+    <string name="preview_now_showing">This wallpaper is currently showing.</string>
+    <string name="preview_selected">Selected • activate Deckscape to show this wallpaper</string>
+    <string name="preview_on_device">On device • choose Set to show this wallpaper</string>
     <string name="library_empty">NO WALLPAPERS DOWNLOADED</string>
     <string name="library_group_empty">NO %1$s WALLPAPERS</string>
     <string name="library_group_count">%1$s (%2$d)</string>

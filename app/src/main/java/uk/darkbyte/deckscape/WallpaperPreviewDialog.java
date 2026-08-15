@@ -2,6 +2,9 @@ package uk.darkbyte.deckscape;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.WallpaperInfo;
+import android.app.WallpaperManager;
+import android.content.ComponentName;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
@@ -44,8 +47,9 @@ final class WallpaperPreviewDialog {
     private AnimatedGifView animation;
     private Button previous;
     private Button next;
-    private Button get;
-    private Button set;
+    private Button primaryAction;
+    private TextView stateBadge;
+    private PreviewActionState actionState = PreviewActionState.GET;
     private int requestGeneration;
 
     WallpaperPreviewDialog(Activity activity, PreviewCache previews,
@@ -90,17 +94,11 @@ final class WallpaperPreviewDialog {
         actions.addView(position, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
-        get = Ui.button(activity, "Get", true);
-        LinearLayout.LayoutParams getParams = new LinearLayout.LayoutParams(
-                Ui.dp(activity, 112), Ui.dp(activity, 46));
-        getParams.rightMargin = Ui.dp(activity, 8);
-        actions.addView(get, getParams);
-
-        set = Ui.button(activity, "Set", false);
-        LinearLayout.LayoutParams setParams = new LinearLayout.LayoutParams(
-                Ui.dp(activity, 112), Ui.dp(activity, 46));
-        setParams.rightMargin = Ui.dp(activity, 8);
-        actions.addView(set, setParams);
+        primaryAction = Ui.button(activity, "Get", true);
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
+                Ui.dp(activity, 150), Ui.dp(activity, 46));
+        actionParams.rightMargin = Ui.dp(activity, 8);
+        actions.addView(primaryAction, actionParams);
 
         Button close = Ui.button(activity, "Close", false);
         actions.addView(close, new LinearLayout.LayoutParams(
@@ -110,8 +108,7 @@ final class WallpaperPreviewDialog {
 
         dialog = new AlertDialog.Builder(activity).setView(panel).create();
         close.setOnClickListener(view -> dialog.dismiss());
-        get.setOnClickListener(view -> getCurrent());
-        set.setOnClickListener(view -> setCurrent());
+        primaryAction.setOnClickListener(view -> performPrimaryAction());
         previous.setOnClickListener(view -> {
             sequence.previous();
             renderCurrent();
@@ -151,6 +148,17 @@ final class WallpaperPreviewDialog {
         frame.addView(loading, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
+        stateBadge = Ui.title(activity, "", 10);
+        stateBadge.setTextColor(Ui.NAV);
+        stateBadge.setGravity(Gravity.CENTER);
+        stateBadge.setPadding(Ui.dp(activity, 10), 0, Ui.dp(activity, 10), 0);
+        stateBadge.setVisibility(View.GONE);
+        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(activity, 28),
+                Gravity.TOP | Gravity.START);
+        badgeParams.setMargins(Ui.dp(activity, 12), Ui.dp(activity, 12), 0, 0);
+        frame.addView(stateBadge, badgeParams);
+
         previous = navigationButton("‹", "Previous wallpaper");
         FrameLayout.LayoutParams previousParams = new FrameLayout.LayoutParams(
                 Ui.dp(activity, 58), Ui.dp(activity, 92), Gravity.START | Gravity.CENTER_VERTICAL);
@@ -182,9 +190,6 @@ final class WallpaperPreviewDialog {
         String displayName = WallpaperStore.displayName(item.name);
 
         title.setText(displayName);
-        description.setText(item.isGif()
-                ? "Animated preview • original GIF is cached temporarily for playback"
-                : "Optimised 16:9 preview • choose Get to save the original");
         refreshActions(item);
         position.setText(activity.getString(R.string.preview_position,
                 sequence.position(), sequence.size()));
@@ -232,18 +237,22 @@ final class WallpaperPreviewDialog {
         return generation == requestGeneration && dialog != null && dialog.isShowing();
     }
 
+    private void performPrimaryAction() {
+        if (actionState == PreviewActionState.GET) getCurrent();
+        else if (actionState == PreviewActionState.SET) setCurrent();
+    }
+
     private void getCurrent() {
         CatalogItem item = sequence.current();
         if (item == null || listener == null) return;
         int generation = requestGeneration;
-        get.setEnabled(false);
-        get.setText(R.string.preview_getting);
-        set.setEnabled(false);
+        primaryAction.setEnabled(false);
+        primaryAction.setText(R.string.preview_getting);
         listener.onGet(item, new ActionCallback() {
             @Override
             public void onProgress(int percent) {
                 if (!isCurrent(generation)) return;
-                get.setText(percent > 0
+                primaryAction.setText(percent > 0
                         ? activity.getString(R.string.preview_get_progress, percent)
                         : activity.getString(R.string.preview_getting));
             }
@@ -260,9 +269,8 @@ final class WallpaperPreviewDialog {
         CatalogItem item = sequence.current();
         if (item == null || listener == null) return;
         int generation = requestGeneration;
-        get.setEnabled(false);
-        set.setEnabled(false);
-        set.setText(R.string.preview_setting);
+        primaryAction.setEnabled(false);
+        primaryAction.setText(R.string.preview_setting);
         listener.onSet(item, new ActionCallback() {
             @Override
             public void onProgress(int percent) {
@@ -278,13 +286,43 @@ final class WallpaperPreviewDialog {
     }
 
     private void refreshActions(CatalogItem item) {
-        boolean installed = WallpaperStore.installedFile(activity, source, item) != null;
-        get.setText(installed ? "On device" : "Get");
-        get.setEnabled(!installed && WallpaperRules.canInstall(item));
-        get.setAlpha(get.isEnabled() ? 1f : 0.55f);
-        set.setText(R.string.action_set);
-        set.setEnabled(installed);
-        set.setAlpha(installed ? 1f : 0.55f);
+        java.io.File installedFile = WallpaperStore.installedFile(activity, source, item);
+        java.io.File selectedFile = WallpaperStore.selectedDownloaded(activity);
+        boolean selected = installedFile != null && selectedFile != null
+                && installedFile.getName().equals(selectedFile.getName());
+        actionState = PreviewActionState.resolve(installedFile != null, selected,
+                selected && isWallpaperActive(), WallpaperRules.canInstall(item));
+        primaryAction.setText(actionState.label);
+        primaryAction.setEnabled(actionState.enabled);
+        primaryAction.setAlpha(actionState.enabled ? 1f : 0.55f);
+
+        if (actionState == PreviewActionState.NOW_SHOWING) {
+            showStateBadge("NOW SHOWING", Ui.CYAN);
+            description.setText(R.string.preview_now_showing);
+        } else if (actionState == PreviewActionState.SELECTED) {
+            showStateBadge("SELECTED", Ui.GREEN);
+            description.setText(R.string.preview_selected);
+        } else if (actionState == PreviewActionState.SET) {
+            stateBadge.setVisibility(View.GONE);
+            description.setText(R.string.preview_on_device);
+        } else {
+            stateBadge.setVisibility(View.GONE);
+            description.setText(item.isGif()
+                    ? "Animated preview • choose Get to save the original GIF"
+                    : "Optimised 16:9 preview • choose Get to save the original");
+        }
+    }
+
+    private void showStateBadge(String label, int color) {
+        stateBadge.setText(label);
+        stateBadge.setBackground(Ui.rounded(color, Ui.dp(activity, 7)));
+        stateBadge.setVisibility(View.VISIBLE);
+    }
+
+    private boolean isWallpaperActive() {
+        WallpaperInfo info = WallpaperManager.getInstance(activity).getWallpaperInfo();
+        return info != null && new ComponentName(activity, WallpaperEngineService.class)
+                .equals(info.getComponent());
     }
 
     private void styleDialog() {

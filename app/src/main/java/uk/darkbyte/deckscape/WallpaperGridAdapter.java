@@ -1,28 +1,23 @@
 package uk.darkbyte.deckscape;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /** Renders category and wallpaper cards, including preview, slideshow, and current states. */
 final class WallpaperGridAdapter extends BaseAdapter {
@@ -32,7 +27,11 @@ final class WallpaperGridAdapter extends BaseAdapter {
 
         void onPreview(CatalogItem item);
 
-        void onOptions(CatalogItem item);
+        void onOptions(File file);
+
+        void onDelete(File file);
+
+        void onCycleRole(File file, DayNightRole currentRole);
     }
 
     private final Context context;
@@ -41,17 +40,19 @@ final class WallpaperGridAdapter extends BaseAdapter {
     private final List<CatalogItem> allItems = new ArrayList<>();
     private final List<CatalogItem> visibleItems = new ArrayList<>();
     private final Map<String, Integer> downloadProgress = new HashMap<>();
-    private final Set<String> installedNames = new HashSet<>();
-    private final Set<String> includedNames = new HashSet<>();
+    private final Map<String, File> installedFiles = new HashMap<>();
+    private final DayNightSettings dayNight;
     private RepositorySource source;
     private String filter = "";
     private String selectedFileName = "";
     private boolean wallpaperActive;
+    private boolean dayNightEnabled;
 
     WallpaperGridAdapter(Context context, PreviewCache previews, Listener listener) {
         this.context = context;
         this.previews = previews;
         this.listener = listener;
+        dayNight = new DayNightSettings(context);
     }
 
     void setData(RepositorySource repositorySource, List<CatalogItem> items) {
@@ -68,14 +69,15 @@ final class WallpaperGridAdapter extends BaseAdapter {
 
     void refreshLibraryState(boolean engineActive) {
         wallpaperActive = engineActive;
-        installedNames.clear();
-        includedNames.clear();
-        for (File file : WallpaperStore.listDownloaded(context)) {
-            installedNames.add(file.getName());
+        dayNightEnabled = dayNight.isEnabled();
+        installedFiles.clear();
+        List<File> downloaded = WallpaperStore.listDownloaded(context);
+        for (File file : downloaded) {
+            installedFiles.put(file.getName(), file);
         }
         List<File> included = WallpaperStore.list(context);
-        for (File file : included) includedNames.add(file.getName());
-        File selected = WallpaperStore.current(context, included);
+        File selected = WallpaperStore.current(context,
+                dayNightEnabled ? included : downloaded);
         selectedFileName = selected == null ? "" : selected.getName();
         notifyDataSetChanged();
     }
@@ -197,8 +199,8 @@ final class WallpaperGridAdapter extends BaseAdapter {
         String key = item.stableKey(source);
         Integer percent = downloadProgress.get(key);
         String destinationName = WallpaperStore.destinationName(source, item);
-        boolean installed = installedNames.contains(destinationName);
-        boolean included = includedNames.contains(destinationName);
+        File installedFile = installedFiles.get(destinationName);
+        boolean installed = installedFile != null;
         boolean selected = destinationName.equals(selectedFileName);
         boolean active = selected && wallpaperActive;
 
@@ -206,14 +208,13 @@ final class WallpaperGridAdapter extends BaseAdapter {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Ui.dp(context, 6), Ui.dp(context, 6),
                 Ui.dp(context, 6), Ui.dp(context, 6));
-        int cardColor = active ? Ui.CYAN_DARK : selected ? Ui.GREEN_DARK : Ui.SURFACE;
-        int borderColor = active ? Ui.CYAN : selected || included ? Ui.GREEN : Ui.DIVIDER;
-        int borderWidth = active || selected ? 3 : 1;
+        int cardColor = active ? Ui.CYAN_DARK : installed ? Ui.GREEN_DARK : Ui.SURFACE;
+        int borderColor = active ? Ui.CYAN : installed ? Ui.GREEN : Ui.DIVIDER;
+        int borderWidth = active ? 3 : installed ? 2 : 1;
         card.setBackground(Ui.rounded(cardColor, Ui.dp(context, 14),
                 borderColor, Ui.dp(context, borderWidth)));
         String state = active ? "now showing" : selected ? "ready"
-                : included ? "included in slideshow"
-                : installed ? "downloaded, not in slideshow" : "not downloaded";
+                : installed ? "downloaded on this device" : "not downloaded";
         card.setContentDescription(WallpaperStore.displayName(item.name) + ", " + state);
 
         FrameLayout imageFrame = new FrameLayout(context);
@@ -251,15 +252,19 @@ final class WallpaperGridAdapter extends BaseAdapter {
         } else if (active) {
             addImageBadge(imageFrame, "NOW SHOWING", Ui.CYAN, Ui.NAV, Gravity.TOP | Gravity.START);
         } else if (selected) {
-            addImageBadge(imageFrame, "READY", Ui.GREEN, Ui.NAV, Gravity.TOP | Gravity.START);
-        } else if (included) {
-            addImageBadge(imageFrame, "IN SLIDESHOW", Ui.GREEN, Ui.NAV, Gravity.TOP | Gravity.START);
+            addImageBadge(imageFrame, "SELECTED", Ui.GREEN, Ui.NAV, Gravity.TOP | Gravity.START);
         } else if (installed) {
-            addImageBadge(imageFrame, "ON DEVICE", Ui.SURFACE_HIGH, Ui.MUTED,
+            addImageBadge(imageFrame, "ON DEVICE", Ui.GREEN, Ui.NAV,
                     Gravity.TOP | Gravity.START);
         }
 
-        if (item.isGif()) {
+        if (installed && dayNightEnabled) {
+            DayNightRole role = dayNight.effectiveRole(installedFile);
+            boolean automatic = dayNight.assignmentMode() == DayNightAssignmentMode.AUTO;
+            WallpaperCardControls.addRoleBadge(context, imageFrame,
+                    WallpaperStore.displayName(item.name), role, automatic,
+                    view -> listener.onCycleRole(installedFile, role));
+        } else if (item.isGif()) {
             addImageBadge(imageFrame, "GIF", Ui.CYAN, Ui.NAV, Gravity.TOP | Gravity.END);
         }
 
@@ -273,84 +278,41 @@ final class WallpaperGridAdapter extends BaseAdapter {
         imageFrame.addView(title, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 29), Gravity.BOTTOM));
 
-        LinearLayout actions = new LinearLayout(context);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        actions.setPadding(0, Ui.dp(context, 4), 0, 0);
-
-        Button preview = Ui.actionButton(context, "Preview", false);
-        preview.setSingleLine(true);
-        preview.setTextSize(12);
-        preview.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
-        preview.setContentDescription("Preview " + WallpaperStore.displayName(item.name));
-        preview.setOnClickListener(view -> listener.onPreview(item));
-        LinearLayout.LayoutParams previewParams = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        actions.addView(preview, previewParams);
-
-        FrameLayout actionBox = buildAction(item, percent, installed, active);
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        actionParams.leftMargin = Ui.dp(context, 6);
-        actions.addView(actionBox, actionParams);
-        if (installed) {
-            Button options = Ui.actionButton(context, "Options", false);
-            options.setSingleLine(true);
-            options.setTextSize(11);
-            options.setMinWidth(0);
-            options.setMinimumWidth(0);
-            options.setPadding(Ui.dp(context, 4), 0, Ui.dp(context, 4), 0);
-            options.setContentDescription("Options for " + WallpaperStore.displayName(item.name));
-            options.setOnClickListener(view -> listener.onOptions(item));
-            LinearLayout.LayoutParams optionsParams = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-            optionsParams.leftMargin = Ui.dp(context, 6);
-            actions.addView(options, optionsParams);
-        }
-        card.addView(actions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 46)));
-        return card;
-    }
-
-    private FrameLayout buildAction(CatalogItem item, Integer percent,
-                                    boolean installed, boolean active) {
-        FrameLayout box = new FrameLayout(context);
-        String label = !WallpaperRules.canInstall(item) ? context.getString(R.string.too_large)
-                : percent != null ? (percent < 0 ? "Starting" : percent + "%")
-                : installed ? "Set" : "Get";
-        boolean enabled = WallpaperRules.canInstall(item)
-                && percent == null && !active;
-        Button action = Ui.actionButton(context, label, !installed);
-        action.setSingleLine(true);
-        action.setTextSize(12);
-        action.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
-        action.setEnabled(enabled);
-        if (!enabled && percent == null) action.setTextColor(active ? Ui.CYAN : Ui.MUTED);
-        if (active) {
-            action.setBackground(Ui.rounded(Ui.CYAN_DARK, Ui.dp(context, 10),
-                    Ui.CYAN, Ui.dp(context, 2)));
-        } else if (installed) {
-            action.setTextColor(Ui.CYAN);
-        }
-        action.setOnClickListener(view -> listener.onAction(item));
-        box.addView(action, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-
+        String displayName = WallpaperStore.displayName(item.name);
         if (percent != null) {
-            ProgressBar bar = new ProgressBar(context, null,
-                    android.R.attr.progressBarStyleHorizontal);
-            bar.setMax(100);
-            bar.setIndeterminate(percent < 0);
-            if (percent >= 0) bar.setProgress(percent);
-            bar.setProgressTintList(ColorStateList.valueOf(Ui.CYAN));
-            bar.setIndeterminateTintList(ColorStateList.valueOf(Ui.CYAN));
-            bar.setProgressBackgroundTintList(ColorStateList.valueOf(Ui.CYAN_DARK));
-            FrameLayout.LayoutParams barParams = new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 4), Gravity.BOTTOM);
-            barParams.setMargins(Ui.dp(context, 9), 0, Ui.dp(context, 9), Ui.dp(context, 5));
-            box.addView(bar, barParams);
+            WallpaperCardControls.addActionRow(context, card,
+                    WallpaperCardControls.Action.progress(
+                            percent < 0 ? "Starting" : percent + "%",
+                            "Downloading " + displayName, percent));
+        } else if (!WallpaperRules.canInstall(item)) {
+            WallpaperCardControls.addActionRow(context, card,
+                    WallpaperCardControls.Action.disabled(
+                            context.getString(R.string.too_large),
+                            displayName + " exceeds the download size limit"));
+        } else if (!installed) {
+            WallpaperCardControls.addActionRow(context, card,
+                    WallpaperCardControls.Action.primary("Get", "Download " + displayName,
+                            view -> listener.onAction(item)));
+        } else {
+            WallpaperCardControls.Action set = active
+                    ? WallpaperCardControls.Action.selected("Showing",
+                    displayName + " is currently showing")
+                    : selected
+                    ? WallpaperCardControls.Action.selected("Selected",
+                    displayName + " is selected; activate Deckscape to show it")
+                    : WallpaperCardControls.Action.standard("Set", "Set " + displayName,
+                    true, view -> listener.onAction(item));
+            WallpaperCardControls.addActionRow(context, card, set,
+                    WallpaperCardControls.Action.destructive(
+                            "Delete " + displayName + " from this device",
+                            view -> listener.onDelete(installedFile)),
+                    WallpaperCardControls.Action.standard("Options",
+                            "Options for " + displayName, true,
+                            view -> listener.onOptions(installedFile)));
         }
-        return box;
+        card.setLayoutParams(new android.widget.AbsListView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 180)));
+        return card;
     }
 
     private void addImageBadge(FrameLayout frame, String label, int fill, int textColor,

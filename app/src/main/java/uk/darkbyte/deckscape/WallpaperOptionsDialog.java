@@ -27,8 +27,6 @@ final class WallpaperOptionsDialog {
 
         void onSetNow(File file);
 
-        void onSetIncluded(File file, boolean included);
-
         void onDelete(File file);
     }
 
@@ -108,20 +106,25 @@ final class WallpaperOptionsDialog {
         controls.addView(cropHelp, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 30)));
 
-        controls.addView(sectionLabel(activity, "DAY & NIGHT"), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 28)));
-        Spinner role = spinner(activity, labels(DayNightRole.values()));
-        role.setSelection(original.role.ordinal());
-        controls.addView(role, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 48)));
-
-        boolean[] included = {WallpaperStore.isIncluded(activity, file)};
-        Button membership = Ui.actionButton(activity,
-                included[0] ? "Remove from slideshow" : "Add to slideshow", false);
-        membership.setSingleLine(true);
-        membership.setTextColor(included[0] ? Ui.GREEN : Ui.CYAN);
-        controls.addView(membership, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 48)));
+        Spinner[] roleHolder = {null};
+        if (settings.isEnabled()) {
+            controls.addView(sectionLabel(activity, "DAY & NIGHT"),
+                    new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 28)));
+            if (settings.assignmentMode() == DayNightAssignmentMode.AUTO) {
+                TextView automatic = Ui.text(activity,
+                        "Automatically sorted as " + settings.effectiveRole(file).label
+                                + " from image brightness.", 13, Ui.MUTED);
+                automatic.setGravity(Gravity.CENTER_VERTICAL);
+                controls.addView(automatic, new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 48)));
+            } else {
+                roleHolder[0] = spinner(activity, labels(DayNightRole.values()));
+                roleHolder[0].setSelection(original.role.ordinal());
+                controls.addView(roleHolder[0], new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(activity, 48)));
+            }
+        }
 
         scale.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -136,14 +139,18 @@ final class WallpaperOptionsDialog {
 
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
-        role.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            @Override
-            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                editing[0] = editing[0].withRole(DayNightRole.values()[position]);
-            }
+        Spinner role = roleHolder[0];
+        if (role != null) {
+            role.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view,
+                                           int position, long id) {
+                    editing[0] = editing[0].withRole(DayNightRole.values()[position]);
+                }
 
-            @Override public void onNothingSelected(AdapterView<?> parent) {}
-        });
+                @Override public void onNothingSelected(AdapterView<?> parent) {}
+            });
+        }
         zoom.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
@@ -162,20 +169,13 @@ final class WallpaperOptionsDialog {
             preview.resetCrop();
             editing[0] = editing[0].withCrop(1f, 0.5f, 0.5f);
         });
-        membership.setOnClickListener(view -> {
-            included[0] = !included[0];
-            listener.onSetIncluded(file, included[0]);
-            membership.setText(included[0] ? "Remove from slideshow" : "Add to slideshow");
-            membership.setTextColor(included[0] ? Ui.GREEN : Ui.CYAN);
-        });
-
         LinearLayout actions = new LinearLayout(activity);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         Button delete = Ui.actionButton(activity, "Delete", false);
         delete.setTextColor(Ui.CORAL);
         delete.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(activity, 10),
                 Ui.CORAL, Ui.dp(activity, 1)));
-        Button show = Ui.actionButton(activity, "Set now", false);
+        Button show = Ui.actionButton(activity, "Set", false);
         Button cancel = Ui.actionButton(activity, "Cancel", false);
         Button save = Ui.button(activity, "Save options", true);
         addAction(activity, actions, delete, false);
@@ -202,7 +202,8 @@ final class WallpaperOptionsDialog {
         delete.setOnClickListener(view -> {
             AlertDialog confirmation = new AlertDialog.Builder(activity)
                     .setTitle("Delete " + WallpaperStore.displayName(file) + "?")
-                    .setMessage("This removes the wallpaper from this device. You can download it again from its source.")
+                    .setMessage("This removes the downloaded wallpaper from this device and "
+                            + "the slideshow. You can download it again from its source.")
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Delete", (ignored, which) -> {
                         listener.onDelete(file);

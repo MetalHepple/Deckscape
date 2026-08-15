@@ -6,8 +6,15 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.software.live_wallpaper" android:required="false" />
+
+    <queries>
+        <package android:name="com.overdrive.app" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -29,6 +36,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".DashboardCaptureBridgeActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:theme="@style/DashboardCaptureBridgeTheme"
+            tools:ignore="DiscouragedApi" />
+
+        <service
+            android:name=".DashboardCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <service
             android:name=".WallpaperEngineService"
