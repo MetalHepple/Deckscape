@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -15,9 +16,13 @@ import android.graphics.drawable.ColorDrawable;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
 import android.location.Location;
+import android.media.projection.MediaProjectionConfig;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.SpannableString;
 import android.text.Spanned;
@@ -45,10 +50,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Date;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -59,10 +69,20 @@ import java.util.concurrent.Executors;
  */
 public final class MainActivity extends Activity {
     private static final int REQUEST_FOREGROUND_LOCATION = 41;
+    private static final int REQUEST_DASHBOARD_CAPTURE = 42;
+    private static final int REQUEST_CAPTURE_NOTIFICATIONS = 43;
+
+    private enum LocationRequestPurpose {
+        NONE,
+        ENABLE_DAY_NIGHT,
+        ENABLE_WEATHER,
+        UPDATE_SHARED_AREA,
+        DAILY_REFRESH
+    }
     private static final String UI_PREFS = "ui_state";
     private static final String KEY_LAST_SOURCE = "last_source";
     private static final String[] INTERVAL_LABELS = {
-            "Manual", "1 minute", "1 hour", "6 hours", "1 day"
+            "Off – keep current", "Every minute", "Every hour", "Every 6 hours", "Every day"
     };
     private static final long[] INTERVAL_VALUES = {
             0L, 60_000L, 3_600_000L, 21_600_000L, 86_400_000L
@@ -79,6 +99,8 @@ public final class MainActivity extends Activity {
     private GitHubMetadataClient metadataClient;
     private RepositoryMetadata aboutMetadata;
     private DayNightSettings dayNightSettings;
+    private SavedAreaSettings savedAreaSettings;
+    private OverlaySettings overlaySettings;
     private CoarseLocationClient locationClient;
     private UpdateManager.State updateState;
     private SourceListAdapter sourceAdapter;
@@ -102,9 +124,11 @@ public final class MainActivity extends Activity {
     private Button openSourceButton;
     private Button infoButton;
     private Button settingsButton;
-    private AlertDialog settingsDialog;
+    private AlertDialog widgetsDialog;
     private Button settingsDayNightToggle;
     private TextView settingsDayNightStatus;
+    private LinearLayout settingsDayNightOptions;
+    private Spinner settingsAssignmentMode;
     private Spinner settingsScheduleMode;
     private TextView settingsDayTimeLabel;
     private TextView settingsNightTimeLabel;
@@ -113,11 +137,23 @@ public final class MainActivity extends Activity {
     private TextView settingsDayCalculatedTime;
     private TextView settingsNightCalculatedTime;
     private Button settingsLocationButton;
-    private boolean pendingEnableDayNight;
+    private DashboardLayoutEditorView settingsWidgetPreview;
+    private final EnumMap<OverlayWidget, WallpaperWidgetTileView> settingsWidgetTiles =
+            new EnumMap<>(OverlayWidget.class);
+    private Button settingsCaptureDashboard;
+    private Button settingsWidgetSnap;
+    private TextView weatherAreaStatus;
+    private Button weatherAreaButton;
+    private Button weatherDailyRefreshButton;
+    private LocationRequestPurpose locationRequestPurpose = LocationRequestPurpose.NONE;
+    private boolean returnToWidgetWorkspace;
+    private EnumMap<OverlayWidget, OverlayPlacement> dashboardCaptureDraftPlacements;
+    private boolean awaitingCaptureNotificationPermission;
     private AlertDialog infoDialog;
     private AlertDialog updateDialog;
     private TextView infoUpdateStatus;
     private TextView updateDialogStatus;
+    private boolean automaticAssignmentInProgress;
     private ProgressBar updateDialogProgress;
     private Button updateDialogAction;
 
@@ -130,7 +166,11 @@ public final class MainActivity extends Activity {
         catalogClient = new GitHubCatalogClient(this);
         metadataClient = new GitHubMetadataClient(this);
         previewCache = new PreviewCache(this);
+        savedAreaSettings = new SavedAreaSettings(this);
         dayNightSettings = new DayNightSettings(this);
+        overlaySettings = new OverlaySettings(this);
+        boolean recoveredCapture = DashboardCaptureStore.recoverInterrupted(this,
+                System.currentTimeMillis());
         locationClient = new CoarseLocationClient(this);
         setContentView(buildUi());
         updateManager = new UpdateManager(this, this::onUpdateStateChanged);
@@ -139,12 +179,28 @@ public final class MainActivity extends Activity {
         reloadSources();
         RepositorySource initial = lastSource();
         if (initial != null) selectSource(initial);
+        if (recoveredCapture) {
+            Toast.makeText(this, "Capture stopped. Wallpaper widgets are visible again.",
+                    Toast.LENGTH_LONG).show();
+        }
+        scheduleInterruptedCaptureRecovery();
+        handleCaptureIntent(getIntent());
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         updateActiveState();
+        maybeRefreshSavedAreaDaily();
+        if ((returnToWidgetWorkspace || DashboardCaptureStore.shouldReturnToWidgets(this))
+                && !DashboardCaptureStore.isPending(this)) {
+            returnToWidgetWorkspace = false;
+            DashboardCaptureStore.clearReturnToWidgets(this);
+            DashboardCaptureService.dismissCompletionNotification(this);
+            activationGuideShown = true;
+            settingsButton.post(this::showWallpaperWidgets);
+            return;
+        }
         if (!activationGuideShown && !isWallpaperActive()) {
             activationGuideShown = true;
             modeButton.post(this::showActivationGuide);
@@ -152,20 +208,73 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleCaptureIntent(intent);
+    }
+
+    private void handleCaptureIntent(Intent intent) {
+        if (intent != null && DashboardCaptureService.ACTION_OPEN_EDITOR.equals(
+                intent.getAction())) {
+            returnToWidgetWorkspace = true;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_DASHBOARD_CAPTURE) return;
+        if (resultCode != RESULT_OK || data == null) {
+            DashboardCaptureStore.restoreWidgets(this);
+            DashboardCaptureStore.clearReturnToWidgets(this);
+            returnToWidgetWorkspace = false;
+            Toast.makeText(this, "Dashboard capture cancelled.",
+                    Toast.LENGTH_LONG).show();
+            settingsButton.post(this::showWallpaperWidgets);
+            return;
+        }
+        try {
+            DashboardCaptureStore.disableWidgets(this);
+            Intent bridge = new Intent(this, DashboardCaptureBridgeActivity.class)
+                    .putExtra(DashboardCaptureService.EXTRA_RESULT_CODE, resultCode)
+                    .putExtra(DashboardCaptureService.EXTRA_RESULT_DATA, data);
+            startActivity(bridge);
+        } catch (Exception exception) {
+            DashboardCaptureStore.restoreWidgets(this);
+            DashboardCaptureStore.clearReturnToWidgets(this);
+            returnToWidgetWorkspace = false;
+            Toast.makeText(this,
+                    "Dashboard capture could not start. Wallpaper widgets are visible.",
+                    Toast.LENGTH_LONG).show();
+            settingsButton.post(this::showWallpaperWidgets);
+        }
+    }
+
+    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions,
                                            int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_CAPTURE_NOTIFICATIONS) {
+            if (awaitingCaptureNotificationPermission) {
+                awaitingCaptureNotificationPermission = false;
+                startDashboardCaptureConsent();
+            }
+            return;
+        }
         if (requestCode != REQUEST_FOREGROUND_LOCATION) return;
         if (hasUsableForegroundLocationPermission()) {
-            resolveAutomaticLocation();
+            resolveSavedArea();
         } else {
-            boolean shouldEnable = pendingEnableDayNight;
-            pendingEnableDayNight = false;
+            LocationRequestPurpose purpose = locationRequestPurpose;
+            locationRequestPurpose = LocationRequestPurpose.NONE;
             refreshSettingsStatus();
-            Toast.makeText(this,
-                    shouldEnable
-                            ? "GPS access was not enabled. Day & Night remains off; choose Manual or try again."
-                            : "GPS access was not enabled. Choose Manual times or try again.",
+            if (purpose != LocationRequestPurpose.DAILY_REFRESH) Toast.makeText(this,
+                    purpose == LocationRequestPurpose.ENABLE_WEATHER
+                            ? "Location access was not enabled. Weather remains off."
+                            : purpose == LocationRequestPurpose.ENABLE_DAY_NIGHT
+                            ? "Location access was not enabled. Day & Night remains off; choose Manual or try again."
+                            : "Location access was not enabled.",
                     Toast.LENGTH_LONG).show();
         }
     }
@@ -173,7 +282,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         if (locationClient != null && locationClient.isRequesting()) {
-            cancelAutomaticLocation(false);
+            cancelLocationRequest(false);
         }
         super.onStop();
     }
@@ -246,36 +355,12 @@ public final class MainActivity extends Activity {
         top.addView(activeIndicator, new LinearLayout.LayoutParams(
                 Ui.dp(this, 132), Ui.dp(this, 48)));
 
-        Spinner interval = new Spinner(this);
-        ArrayAdapter<String> intervals = new ArrayAdapter<String>(this,
-                android.R.layout.simple_spinner_item, INTERVAL_LABELS) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                TextView view = Ui.text(MainActivity.this,
-                        "↻  " + getItem(position), 14, Ui.TEXT);
-                view.setPadding(Ui.dp(MainActivity.this, 12), 0, Ui.dp(MainActivity.this, 8), 0);
-                return view;
-            }
-        };
-        intervals.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        interval.setAdapter(intervals);
-        interval.setBackground(Ui.rounded(Ui.SURFACE_HIGH, Ui.dp(this, 12), Ui.DIVIDER, 1));
-        LinearLayout.LayoutParams intervalParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 148), Ui.dp(this, 48));
-        intervalParams.leftMargin = Ui.dp(this, 8);
-        top.addView(interval, intervalParams);
-        configureInterval(interval);
-
-        Button next = Ui.button(this, "▷  Next", false);
-        next.setOnClickListener(view -> {
-            sendBroadcast(new Intent(WallpaperEngineService.ACTION_NEXT).setPackage(getPackageName()));
-            setStatus("Advanced to the next slideshow wallpaper.");
-            next.postDelayed(() -> gridAdapter.refreshLibraryState(isWallpaperActive()), 500);
-        });
-        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 96), Ui.dp(this, 48));
-        actionParams.leftMargin = Ui.dp(this, 8);
-        top.addView(next, actionParams);
+        Button widgets = Ui.button(this, "Widgets", false);
+        widgets.setOnClickListener(view -> showWallpaperWidgets());
+        LinearLayout.LayoutParams widgetParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 112), Ui.dp(this, 48));
+        widgetParams.leftMargin = Ui.dp(this, 8);
+        top.addView(widgets, widgetParams);
 
         modeButton = Ui.button(this, "Library", true);
         modeButton.setOnClickListener(view -> showSlideshowLibrary());
@@ -455,10 +540,18 @@ public final class MainActivity extends Activity {
                     }
 
                     @Override
-                    public void onOptions(CatalogItem item) {
-                        File file = WallpaperStore.installedFile(
-                                MainActivity.this, activeSource, item);
-                        if (file != null) showWallpaperOptions(file, null);
+                    public void onOptions(File file) {
+                        showWallpaperOptions(file, null);
+                    }
+
+                    @Override
+                    public void onDelete(File file) {
+                        requestWallpaperDeletion(file, null);
+                    }
+
+                    @Override
+                    public void onCycleRole(File file, DayNightRole currentRole) {
+                        cycleWallpaperRole(file, currentRole, null);
                     }
                 });
         grid.setAdapter(gridAdapter);
@@ -468,9 +561,7 @@ public final class MainActivity extends Activity {
     }
 
     private void configureInterval(Spinner spinner) {
-        SharedPreferences preferences = getSharedPreferences(WallpaperEngineService.PREFS, MODE_PRIVATE);
-        long saved = preferences.getLong(WallpaperEngineService.PREF_INTERVAL,
-                WallpaperEngineService.DEFAULT_INTERVAL);
+        long saved = slideshowInterval();
         int selected = 0;
         for (int i = 0; i < INTERVAL_VALUES.length; i++) {
             if (INTERVAL_VALUES[i] == saved) selected = i;
@@ -479,13 +570,59 @@ public final class MainActivity extends Activity {
         spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                preferences.edit().putLong(WallpaperEngineService.PREF_INTERVAL,
-                        INTERVAL_VALUES[position]).apply();
-                sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
-                        .setPackage(getPackageName()));
+                long interval = INTERVAL_VALUES[position];
+                setSlideshowInterval(interval);
+                setStatus(RotationPolicy.isSlideshowEnabled(interval)
+                        ? "Slideshow on • wallpapers change " + intervalDescription(interval) + "."
+                        : "Slideshow off • the current wallpaper stays fixed.");
             }
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
+    }
+
+    private long slideshowInterval() {
+        return getSharedPreferences(WallpaperEngineService.PREFS, MODE_PRIVATE)
+                .getLong(WallpaperEngineService.PREF_INTERVAL,
+                        WallpaperEngineService.DEFAULT_INTERVAL);
+    }
+
+    private void setSlideshowInterval(long interval) {
+        long value = Math.max(0, interval);
+        SharedPreferences preferences = getSharedPreferences(
+                WallpaperEngineService.PREFS, MODE_PRIVATE);
+        long previous = preferences.getLong(WallpaperEngineService.PREF_INTERVAL,
+                WallpaperEngineService.DEFAULT_INTERVAL);
+        SharedPreferences.Editor editor = preferences.edit()
+                .putLong(WallpaperEngineService.PREF_INTERVAL, value);
+        if (RotationPolicy.isSlideshowEnabled(value)) {
+            editor.putLong(WallpaperEngineService.PREF_LAST_ENABLED_INTERVAL, value);
+            if (!RotationPolicy.isSlideshowEnabled(previous)) {
+                editor.putLong(WallpaperEngineService.PREF_LAST_SWITCH,
+                                System.currentTimeMillis())
+                        .putBoolean(WallpaperEngineService.PREF_MANUAL_OVERRIDE, false);
+            }
+        } else if (RotationPolicy.isSlideshowEnabled(previous)) {
+            editor.putLong(WallpaperEngineService.PREF_LAST_ENABLED_INTERVAL, previous);
+        }
+        editor.apply();
+        broadcastConfigurationChanged();
+    }
+
+    private long lastEnabledSlideshowInterval() {
+        long saved = getSharedPreferences(WallpaperEngineService.PREFS, MODE_PRIVATE)
+                .getLong(WallpaperEngineService.PREF_LAST_ENABLED_INTERVAL,
+                        WallpaperEngineService.DEFAULT_INTERVAL);
+        for (int index = 1; index < INTERVAL_VALUES.length; index++) {
+            if (INTERVAL_VALUES[index] == saved) return saved;
+        }
+        return WallpaperEngineService.DEFAULT_INTERVAL;
+    }
+
+    private static String intervalDescription(long interval) {
+        if (interval == 60_000L) return "every minute";
+        if (interval == 21_600_000L) return "every 6 hours";
+        if (interval == 86_400_000L) return "every day";
+        return "every hour";
     }
 
     private void reloadSources() {
@@ -542,9 +679,8 @@ public final class MainActivity extends Activity {
                     rebuildCategoryStrip();
                     updateBreadcrumb();
                     setLoading(false);
-                    String note = page.staleCache ? " • offline cache" : "";
-                    setStatus(page.items.size() + " items" + note
-                            + " • previews load only when visible");
+                    String note = page.staleCache ? " • saved offline" : "";
+                    setStatus(page.items.size() + " items" + note);
                 });
             } catch (Exception exception) {
                 showLoadError(generation, exception);
@@ -557,7 +693,7 @@ public final class MainActivity extends Activity {
         RepositorySource source = activeSource;
         int generation = ++requestGeneration;
         setLoading(true);
-        setStatus("Building the complete " + activeSource.displayName + " index…");
+        setStatus("Loading all wallpapers from " + activeSource.displayName + "…");
         io.execute(() -> {
             try {
                 CatalogPage page = catalogClient.listAll(source);
@@ -569,8 +705,8 @@ public final class MainActivity extends Activity {
                     rebuildCategoryStrip();
                     updateBreadcrumb();
                     setLoading(false);
-                    String note = page.truncated ? " • GitHub index truncated" : "";
-                    if (page.staleCache) note += " • offline cache";
+                    String note = page.truncated ? " • some results omitted" : "";
+                    if (page.staleCache) note += " • saved offline";
                     setStatus(page.items.size() + " compatible wallpapers" + note);
                 });
             } catch (Exception exception) {
@@ -628,7 +764,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Downloads an original into the local library without selecting or rotating it. */
+    /** Downloads an original into the local library without changing the current display. */
     private void getWallpaper(RepositorySource source, CatalogItem item,
                               WallpaperPreviewDialog.ActionCallback callback) {
         if (!WallpaperRules.canInstall(item)) {
@@ -661,15 +797,16 @@ public final class MainActivity extends Activity {
                     });
                 });
                 WallpaperStore.removeFromSlideshow(this, file);
+                if (dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO) {
+                    sortAutomaticAssignmentsNow();
+                }
                 sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
                         .setPackage(getPackageName()));
                 runOnUiThread(() -> {
                     gridAdapter.clearDownloadProgress(source, item);
                     gridAdapter.refreshLibraryState(isWallpaperActive());
                     setStatus("Saved " + displayName
-                            + " to Library. Wallpaper and slideshow unchanged.");
-                    Toast.makeText(this, "Saved to Library • wallpaper unchanged",
-                            Toast.LENGTH_SHORT).show();
+                            + " to Library. Current wallpaper unchanged.");
                     if (callback != null) callback.onComplete(true);
                 });
             } catch (Exception exception) {
@@ -705,15 +842,10 @@ public final class MainActivity extends Activity {
                     boolean active = isWallpaperActive();
                     gridAdapter.refreshLibraryState(active);
                     if (active) {
-                        setStatus("Now showing " + displayName
-                                + ". Other included wallpapers remain in the slideshow.");
-                        Toast.makeText(this, "Now showing • added to slideshow",
-                                Toast.LENGTH_SHORT).show();
+                        setStatus("Now showing " + displayName + ".");
                     } else {
                         setStatus("Selected " + displayName
                                 + ". Tap Setup needed to enable Deckscape.");
-                        Toast.makeText(this, "Selected • setup still needed",
-                                Toast.LENGTH_SHORT).show();
                     }
                     if (callback != null) callback.onComplete(true);
                 });
@@ -781,7 +913,7 @@ public final class MainActivity extends Activity {
                         Ui.dp(this, 42)));
 
         TextView introduction = Ui.text(this,
-                "Android needs one confirmation before Deckscape can control your wallpaper.",
+                "Android needs one confirmation before Deckscape can become your live wallpaper.",
                 14, Ui.MUTED);
         introduction.setMaxLines(2);
         panel.addView(introduction, new LinearLayout.LayoutParams(
@@ -838,7 +970,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** Shows every downloaded wallpaper with independent slideshow and deletion controls. */
+    /** Shows every downloaded wallpaper with the same actions used by Browse. */
     private void showSlideshowLibrary() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -868,6 +1000,7 @@ public final class MainActivity extends Activity {
         }
         panel.addView(groups, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 46)));
+        groups.setVisibility(dayNightSettings.isEnabled() ? View.VISIBLE : View.GONE);
 
         FrameLayout content = new FrameLayout(this);
         GridView slideshow = new GridView(this);
@@ -891,69 +1024,25 @@ public final class MainActivity extends Activity {
         SlideshowGridAdapter[] adapterHolder = new SlideshowGridAdapter[1];
         Runnable[] refreshHolder = new Runnable[1];
         SlideshowGridAdapter adapter = new SlideshowGridAdapter(
-                this, previewCache, new SlideshowGridAdapter.Listener() {
+                this, previewCache, isWallpaperActive(), new SlideshowGridAdapter.Listener() {
             @Override
             public void onSet(File file) {
-                try {
-                    WallpaperStore.include(MainActivity.this, file);
-                    WallpaperStore.select(MainActivity.this, file);
-                    refreshHolder[0].run();
-                    setStatus("Now showing " + WallpaperStore.displayName(file)
-                            + ". It is included in the slideshow.");
-                    Toast.makeText(MainActivity.this, "Now showing • added to slideshow",
-                            Toast.LENGTH_SHORT).show();
-                } catch (Exception exception) {
-                    showWallpaperLibraryError(exception);
-                }
-            }
-
-            @Override
-            public void onSetIncluded(File file, boolean included) {
-                try {
-                    if (included) WallpaperStore.include(MainActivity.this, file);
-                    else WallpaperStore.removeFromSlideshow(MainActivity.this, file);
-                    boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
-                    refreshHolder[0].run();
-                    String name = WallpaperStore.displayName(file);
-                    int count = adapterHolder[0].includedCount();
-                    if (included) {
-                        setStatus("Added " + name + " to the slideshow.");
-                        Toast.makeText(MainActivity.this, "Added to slideshow",
-                                Toast.LENGTH_SHORT).show();
-                    } else if (count == 0) {
-                        setStatus("Removed " + name
-                                + ". The slideshow is empty; the download remains on device.");
-                        Toast.makeText(MainActivity.this, "Slideshow empty • file kept on device",
-                                Toast.LENGTH_LONG).show();
-                    } else {
-                        setStatus("Removed " + name
-                                + " from the slideshow; the download remains on device.");
-                        Toast.makeText(MainActivity.this, "Removed from slideshow • file kept",
-                                Toast.LENGTH_SHORT).show();
-                    }
-                    if (scheduleDisabled) showScheduleDisabledMessage();
-                } catch (Exception exception) {
-                    showWallpaperLibraryError(exception);
-                }
+                setDownloadedWallpaper(file, refreshHolder[0]);
             }
 
             @Override
             public void onCycleRole(File file, DayNightRole currentRole) {
-                DayNightRole nextRole = currentRole.next();
-                WallpaperProfileStore profiles = new WallpaperProfileStore(MainActivity.this);
-                profiles.put(file, profiles.get(file).withRole(nextRole));
-                boolean scheduleDisabled = dayNightSettings.disableIfIncomplete();
-                refreshHolder[0].run();
-                String name = WallpaperStore.displayName(file);
-                setStatus(name + " is now " + nextRole.label + ".");
-                Toast.makeText(MainActivity.this, nextRole.label,
-                        Toast.LENGTH_SHORT).show();
-                if (scheduleDisabled) showScheduleDisabledMessage();
+                cycleWallpaperRole(file, currentRole, refreshHolder[0]);
             }
 
             @Override
             public void onOptions(File file) {
                 showWallpaperOptions(file, refreshHolder[0]);
+            }
+
+            @Override
+            public void onDelete(File file) {
+                requestWallpaperDeletion(file, refreshHolder[0]);
             }
         });
         adapterHolder[0] = adapter;
@@ -981,14 +1070,33 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 350)));
 
         LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        actions.setGravity(Gravity.CENTER_VERTICAL);
+        actions.setPadding(0, Ui.dp(this, 10), 0, Ui.dp(this, 8));
+        Button slideshowToggle = Ui.button(this, "", false);
+        updateSlideshowToggle(slideshowToggle);
+        actions.addView(slideshowToggle, new LinearLayout.LayoutParams(
+                Ui.dp(this, 184), Ui.dp(this, 46)));
+        View actionSpacer = new View(this);
+        actions.addView(actionSpacer, new LinearLayout.LayoutParams(
+                0, Ui.dp(this, 1), 1f));
         Button close = Ui.button(this, "Close", false);
         actions.addView(close, new LinearLayout.LayoutParams(
                 Ui.dp(this, 104), Ui.dp(this, 46)));
         panel.addView(actions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 72)));
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        slideshowToggle.setOnClickListener(view -> {
+            long nextInterval = RotationPolicy.isSlideshowEnabled(slideshowInterval())
+                    ? 0 : lastEnabledSlideshowInterval();
+            setSlideshowInterval(nextInterval);
+            updateSlideshowToggle(slideshowToggle);
+            updateSlideshowSummary(explanation, adapter);
+            setStatus(RotationPolicy.isSlideshowEnabled(nextInterval)
+                    ? "Slideshow on • wallpapers change "
+                    + intervalDescription(nextInterval) + "."
+                    : "Slideshow off • the current wallpaper stays fixed.");
+        });
         close.setOnClickListener(view -> dialog.dismiss());
         dialog.show();
         Window window = dialog.getWindow();
@@ -1004,9 +1112,7 @@ public final class MainActivity extends Activity {
     private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation,
                                          Button allGroup, Button dayGroup, Button nightGroup,
                                          TextView empty) {
-        sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
-                .setPackage(getPackageName()));
-        adapter.refresh();
+        adapter.refresh(isWallpaperActive());
         updateSlideshowSummary(explanation, adapter);
         updateLibraryGroupControls(adapter, allGroup, dayGroup, nightGroup, empty);
         gridAdapter.refreshLibraryState(isWallpaperActive());
@@ -1015,17 +1121,41 @@ public final class MainActivity extends Activity {
     private void updateSlideshowSummary(TextView explanation, SlideshowGridAdapter adapter) {
         int downloaded = adapter.downloadedCount();
         int included = adapter.includedCount();
+        boolean slideshowEnabled = RotationPolicy.isSlideshowEnabled(slideshowInterval());
         String summary = downloaded == 0
-                ? "Use Get to save wallpapers on this device. Choose Set or Add when you "
-                + "want one in the slideshow."
+                ? "Use Get while browsing to save wallpapers on this device."
+                : !slideshowEnabled
+                ? "Slideshow is off. " + adapter.currentDisplayName()
+                + " stays fixed until you Set another wallpaper."
+                : !dayNightSettings.isEnabled()
+                ? "Day & Night is off. All " + downloaded + " downloaded wallpaper"
+                + (downloaded == 1 ? "" : "s")
+                + " rotate; Delete removes a wallpaper from this device."
+                : (included == downloaded
+                ? downloaded + " downloaded wallpaper" + (downloaded == 1 ? ". " : "s. ")
                 : included + " of " + downloaded + " downloaded wallpaper"
                 + (downloaded == 1 ? "" : "s") + (included == 1 ? " is" : " are")
-                + " in the slideshow. "
+                + " available to Day & Night. ")
+                + (dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO
+                ? "Darker wallpapers are assigned to Night and brighter wallpapers to Day. "
+                : "Tap a Day/Night badge to change when that wallpaper appears. ")
                 + (adapter.group() == LibraryGroup.ALL
-                ? "Remove keeps the file; Delete removes it from this device."
+                ? "Delete removes the wallpaper from this device."
                 : adapter.group().label + " view shows " + adapter.getCount()
                 + "; Both wallpapers appear in Day and Night.");
         explanation.setText(summary);
+    }
+
+    private void updateSlideshowToggle(Button button) {
+        boolean enabled = RotationPolicy.isSlideshowEnabled(slideshowInterval());
+        button.setText(enabled ? "Slideshow: on" : "Slideshow: off");
+        button.setTextColor(enabled ? Ui.NAV : Ui.TEXT);
+        button.setBackground(Ui.rounded(enabled ? Ui.CYAN : Ui.SURFACE_HIGH,
+                Ui.dp(this, 10), enabled ? Ui.CYAN : Ui.DIVIDER,
+                Ui.dp(this, enabled ? 2 : 1)));
+        button.setContentDescription(enabled
+                ? "Turn slideshow off and keep the current wallpaper"
+                : "Turn slideshow on");
     }
 
     private void updateLibraryGroupControls(SlideshowGridAdapter adapter,
@@ -1067,13 +1197,122 @@ public final class MainActivity extends Activity {
         if (delete != null) delete.setTextColor(Ui.CORAL);
     }
 
+    private void requestWallpaperDeletion(File file, Runnable refreshLibraryDialog) {
+        confirmWallpaperDeletion(file, () -> deleteWallpaper(file, refreshLibraryDialog));
+    }
+
+    private void deleteWallpaper(File file, Runnable refreshLibraryDialog) {
+        try {
+            String name = WallpaperStore.displayName(file);
+            WallpaperStore.delete(this, file);
+            if (dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO) {
+                setStatus("Updating automatic Day & Night sorting…");
+                io.execute(() -> {
+                    sortAutomaticAssignmentsNow();
+                    runOnUiThread(() -> finishWallpaperDeletion(
+                            name, refreshLibraryDialog));
+                });
+            } else {
+                finishWallpaperDeletion(name, refreshLibraryDialog);
+            }
+        } catch (Exception exception) {
+            showWallpaperLibraryError(exception);
+        }
+    }
+
+    private void finishWallpaperDeletion(String name, Runnable refreshLibraryDialog) {
+        boolean disabled = dayNightSettings.disableIfIncomplete();
+        notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+        setStatus("Deleted " + name + " from this device.");
+        Toast.makeText(this, "Deleted from device", Toast.LENGTH_SHORT).show();
+        if (disabled) showScheduleDisabledMessage();
+    }
+
+    private void setDownloadedWallpaper(File file, Runnable refreshLibraryDialog) {
+        try {
+            WallpaperStore.include(this, file);
+            WallpaperStore.select(this, file);
+            notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+            String name = WallpaperStore.displayName(file);
+            setStatus(isWallpaperActive() ? "Now showing " + name + "."
+                    : "Selected " + name + ". Tap Setup needed to enable Deckscape.");
+        } catch (Exception exception) {
+            showWallpaperLibraryError(exception);
+        }
+    }
+
+    private void cycleWallpaperRole(File file, DayNightRole currentRole,
+                                    Runnable refreshLibraryDialog) {
+        if (!dayNightSettings.isEnabled()
+                || dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO) return;
+        DayNightRole nextRole = currentRole.next();
+        WallpaperProfileStore profiles = new WallpaperProfileStore(this);
+        profiles.put(file, profiles.get(file).withRole(nextRole));
+        boolean disabled = dayNightSettings.disableIfIncomplete();
+        notifyWallpaperConfigurationChanged(refreshLibraryDialog);
+        setStatus(WallpaperStore.displayName(file) + " is now " + nextRole.label + ".");
+        Toast.makeText(this, nextRole.label, Toast.LENGTH_SHORT).show();
+        if (disabled) showScheduleDisabledMessage();
+    }
+
+    private void enableAutomaticAssignments() {
+        if (automaticAssignmentInProgress) return;
+        automaticAssignmentInProgress = true;
+        if (settingsAssignmentMode != null) settingsAssignmentMode.setEnabled(false);
+        setStatus("Sorting wallpapers by brightness…");
+        io.execute(() -> {
+            int count = sortAutomaticAssignmentsNow();
+            runOnUiThread(() -> {
+                automaticAssignmentInProgress = false;
+                dayNightSettings.setAssignmentMode(DayNightAssignmentMode.AUTO);
+                if (settingsAssignmentMode != null) settingsAssignmentMode.setEnabled(true);
+                notifyWallpaperConfigurationChanged(null);
+                refreshSettingsStatus();
+                setStatus(count == 0 ? "No downloaded wallpapers to sort."
+                        : "Auto-sorted " + count + " wallpaper"
+                        + (count == 1 ? "" : "s") + " by brightness.");
+            });
+        });
+    }
+
+    private int sortAutomaticAssignmentsNow() {
+        List<File> files = WallpaperStore.listDownloaded(this);
+        WallpaperProfileStore store = new WallpaperProfileStore(this);
+        List<DayNightAutoSorter.Sample> samples = new ArrayList<>();
+        Map<String, Double> luminanceByName = new HashMap<>();
+        for (File file : files) {
+            try {
+                WallpaperStore.include(this, file);
+            } catch (IOException ignored) {
+                // listDownloaded only returns validated files from Deckscape's library.
+            }
+            WallpaperProfile profile = store.get(file);
+            double luminance = profile.automaticLuminance;
+            if (!Double.isFinite(luminance)) {
+                try {
+                    luminance = WallpaperLuminanceClassifier.measure(file);
+                } catch (IOException ignored) {
+                    luminance = 0.5;
+                }
+            }
+            luminanceByName.put(file.getName(), luminance);
+            samples.add(new DayNightAutoSorter.Sample(file.getName(), luminance));
+        }
+        Map<String, DayNightRole> assignments = DayNightAutoSorter.assign(samples);
+        for (File file : files) {
+            store.put(file, store.get(file).withAutomaticAssignment(
+                    luminanceByName.get(file.getName()), assignments.get(file.getName())));
+        }
+        return files.size();
+    }
+
     private void showWallpaperLibraryError(Exception exception) {
         String message = readableMessage(exception);
         setStatus("Could not update wallpaper library: " + message);
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
-    /** Opens one wallpaper's crop, schedule, membership, selection, and deletion controls. */
+    /** Opens one wallpaper's crop, schedule, selection, and deletion controls. */
     private void showWallpaperOptions(File file, Runnable refreshLibraryDialog) {
         WallpaperOptionsDialog.show(this, io, file, new WallpaperOptionsDialog.Listener() {
             @Override
@@ -1087,51 +1326,12 @@ public final class MainActivity extends Activity {
 
             @Override
             public void onSetNow(File selected) {
-                try {
-                    WallpaperStore.include(MainActivity.this, selected);
-                    WallpaperStore.select(MainActivity.this, selected);
-                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
-                    setStatus("Now showing " + WallpaperStore.displayName(selected)
-                            + ". The slideshow remains enabled.");
-                    Toast.makeText(MainActivity.this, "Now showing • slideshow unchanged",
-                            Toast.LENGTH_SHORT).show();
-                } catch (Exception exception) {
-                    showWallpaperLibraryError(exception);
-                }
-            }
-
-            @Override
-            public void onSetIncluded(File changed, boolean included) {
-                try {
-                    if (included) WallpaperStore.include(MainActivity.this, changed);
-                    else WallpaperStore.removeFromSlideshow(MainActivity.this, changed);
-                    boolean disabled = new DayNightSettings(MainActivity.this)
-                            .disableIfIncomplete();
-                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
-                    setStatus((included ? "Added " : "Removed ")
-                            + WallpaperStore.displayName(changed)
-                            + (included ? " to the slideshow." : " from the slideshow."));
-                    if (disabled) showScheduleDisabledMessage();
-                } catch (Exception exception) {
-                    showWallpaperLibraryError(exception);
-                }
+                setDownloadedWallpaper(selected, refreshLibraryDialog);
             }
 
             @Override
             public void onDelete(File deleted) {
-                try {
-                    String name = WallpaperStore.displayName(deleted);
-                    WallpaperStore.delete(MainActivity.this, deleted);
-                    boolean disabled = new DayNightSettings(MainActivity.this)
-                            .disableIfIncomplete();
-                    notifyWallpaperConfigurationChanged(refreshLibraryDialog);
-                    setStatus("Deleted " + name + " from this device.");
-                    Toast.makeText(MainActivity.this, "Deleted from device",
-                            Toast.LENGTH_SHORT).show();
-                    if (disabled) showScheduleDisabledMessage();
-                } catch (Exception exception) {
-                    showWallpaperLibraryError(exception);
-                }
+                deleteWallpaper(deleted, refreshLibraryDialog);
             }
         });
     }
@@ -1326,7 +1526,7 @@ public final class MainActivity extends Activity {
         LinearLayout columns = new LinearLayout(this);
         columns.setOrientation(LinearLayout.HORIZONTAL);
         panel.addView(columns, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 405)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 430)));
 
         LinearLayout schedule = settingsColumn();
         columns.addView(schedule, new LinearLayout.LayoutParams(
@@ -1337,15 +1537,18 @@ public final class MainActivity extends Activity {
         settingsDayNightStatus.setGravity(Gravity.TOP);
         settingsDayNightStatus.setLineSpacing(Ui.dp(this, 2), 1f);
         schedule.addView(settingsDayNightStatus, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 78)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 62)));
 
         settingsDayNightToggle = Ui.button(this, "", true);
         settingsDayNightToggle.setOnClickListener(view -> {
             if (dayNightSettings.isEnabled()) {
-                if (locationClient.isRequesting()) cancelAutomaticLocation(false);
+                if (locationClient.isRequesting()
+                        && locationRequestPurpose == LocationRequestPurpose.ENABLE_DAY_NIGHT) {
+                    cancelLocationRequest(false);
+                }
                 dayNightSettings.setEnabled(false);
-                pendingEnableDayNight = false;
                 broadcastConfigurationChanged();
+                gridAdapter.refreshLibraryState(isWallpaperActive());
                 refreshSettingsStatus();
                 return;
             }
@@ -1354,12 +1557,28 @@ public final class MainActivity extends Activity {
         schedule.addView(settingsDayNightToggle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
-        schedule.addView(settingsLabel("SCHEDULE METHOD"), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
+        settingsDayNightOptions = new LinearLayout(this);
+        settingsDayNightOptions.setOrientation(LinearLayout.VERTICAL);
+        schedule.addView(settingsDayNightOptions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        settingsDayNightOptions.addView(settingsLabel("WALLPAPER ASSIGNMENT"),
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 24)));
+        settingsAssignmentMode = settingsSpinner(assignmentModeLabels());
+        settingsAssignmentMode.setSelection(dayNightSettings.assignmentMode().ordinal());
+        settingsDayNightOptions.addView(settingsAssignmentMode,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 44)));
+
+        settingsDayNightOptions.addView(settingsLabel("SCHEDULE METHOD"),
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 24)));
         settingsScheduleMode = settingsSpinner(scheduleModeLabels());
         settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
-        schedule.addView(settingsScheduleMode, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+        settingsDayNightOptions.addView(settingsScheduleMode,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 44)));
 
         LinearLayout times = new LinearLayout(this);
         times.setOrientation(LinearLayout.HORIZONTAL);
@@ -1371,17 +1590,18 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         nightParams.leftMargin = Ui.dp(this, 8);
         times.addView(nightTime, nightParams);
-        schedule.addView(times, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 82)));
+        settingsDayNightOptions.addView(times, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 76)));
 
-        settingsLocationButton = Ui.actionButton(this, "Refresh automatic location", false);
+        settingsLocationButton = Ui.actionButton(this, "Update location", false);
         settingsLocationButton.setSingleLine(true);
         settingsLocationButton.setOnClickListener(view -> {
-            if (locationClient.isRequesting()) cancelAutomaticLocation(true);
-            else requestAutomaticLocation(false);
+            if (locationClient.isRequesting()) cancelLocationRequest(true);
+            else requestSavedArea(LocationRequestPurpose.UPDATE_SHARED_AREA);
         });
-        schedule.addView(settingsLocationButton, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+        settingsDayNightOptions.addView(settingsLocationButton,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 44)));
 
         LinearLayout right = settingsColumn();
         LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(
@@ -1417,7 +1637,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout storageActions = new LinearLayout(this);
         Button dataSaver = Ui.actionButton(this, previewCache.isDataSaverEnabled()
-                ? "Data saver: on" : "Data saver: off", false);
+                ? "Preview data saver: on" : "Preview data saver: off", false);
         Button clear = Ui.actionButton(this, "Clear previews", false);
         storageActions.addView(dataSaver, new LinearLayout.LayoutParams(
                 0, Ui.dp(this, 48), 1f));
@@ -1437,20 +1657,40 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
-        settingsDialog = dialog;
         boolean[] initializing = {true};
+        settingsAssignmentMode.setOnItemSelectedListener(
+                new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view,
+                                       int position, long id) {
+                if (initializing[0]) return;
+                DayNightAssignmentMode selected = DayNightAssignmentMode.values()[position];
+                if (selected == dayNightSettings.assignmentMode()) return;
+                if (selected == DayNightAssignmentMode.AUTO) {
+                    enableAutomaticAssignments();
+                } else {
+                    dayNightSettings.setAssignmentMode(selected);
+                    notifyWallpaperConfigurationChanged(null);
+                    refreshSettingsStatus();
+                    setStatus("Wallpaper assignment set to Manual.");
+                }
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
         settingsScheduleMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 ScheduleMode selected = ScheduleMode.values()[position];
-                if (selected != ScheduleMode.AUTO && locationClient.isRequesting()) {
-                    cancelAutomaticLocation(false);
+                if (selected != ScheduleMode.AUTO && locationClient.isRequesting()
+                        && locationRequestPurpose == LocationRequestPurpose.ENABLE_DAY_NIGHT) {
+                    cancelLocationRequest(false);
                 }
                 dayNightSettings.setMode(selected);
                 if (!initializing[0] && selected == ScheduleMode.AUTO
                         && dayNightSettings.isEnabled() && !hasAmbientLightSensor()
-                        && !dayNightSettings.hasCoarseLocation()) {
-                    requestAutomaticLocation(false);
+                        && !savedAreaSettings.hasLocation()) {
+                    requestSavedArea(LocationRequestPurpose.UPDATE_SHARED_AREA);
                 }
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
@@ -1470,7 +1710,7 @@ public final class MainActivity extends Activity {
         dataSaver.setOnClickListener(view -> {
             boolean enabled = !previewCache.isDataSaverEnabled();
             previewCache.setDataSaverEnabled(enabled);
-            dataSaver.setText(enabled ? "Data saver: on" : "Data saver: off");
+            dataSaver.setText(enabled ? "Preview data saver: on" : "Preview data saver: off");
             setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
         });
         clear.setOnClickListener(view -> {
@@ -1478,14 +1718,18 @@ public final class MainActivity extends Activity {
             catalogClient.clearCache();
             gridAdapter.notifyDataSetChanged();
             storage.setText(storageSummary());
-            setStatus("Preview and catalog caches cleared.");
+            setStatus("Saved previews and source listings cleared.");
         });
         done.setOnClickListener(view -> dialog.dismiss());
         dialog.setOnDismissListener(ignored -> {
-            if (locationClient.isRequesting()) cancelAutomaticLocation(false);
-            if (settingsDialog == dialog) settingsDialog = null;
+            if (locationClient.isRequesting()
+                    && locationRequestPurpose != LocationRequestPurpose.DAILY_REFRESH) {
+                cancelLocationRequest(false);
+            }
             settingsDayNightToggle = null;
             settingsDayNightStatus = null;
+            settingsDayNightOptions = null;
+            settingsAssignmentMode = null;
             settingsScheduleMode = null;
             settingsDayTimeLabel = null;
             settingsNightTimeLabel = null;
@@ -1496,9 +1740,336 @@ public final class MainActivity extends Activity {
             settingsLocationButton = null;
         });
         dialog.show();
-        styleWideDialog(dialog, 1_050);
+        styleWideDialog(dialog, 900);
         initializing[0] = false;
         refreshSettingsStatus();
+    }
+
+    /** Dedicated workspace for passive overlays and the private dashboard reference. */
+    private void showWallpaperWidgets() {
+        boolean overdriveInstalled = OverdriveBrand.isInstalled(this);
+        EnumMap<OverlayWidget, OverlayPlacement> initialPlacements =
+                dashboardCaptureDraftPlacements == null
+                        ? overlaySettings.placements() : dashboardCaptureDraftPlacements;
+        dashboardCaptureDraftPlacements = null;
+        DashboardLayoutEditorView preview = new DashboardLayoutEditorView(this,
+                initialPlacements);
+        settingsWidgetPreview = preview;
+        File selected = WallpaperStore.selectedDownloaded(this);
+        WallpaperProfile profile = new WallpaperProfileStore(this).get(selected);
+        preview.setWallpaperProfile(profile, dayNightSettings.defaultScaleMode());
+        boolean hasDashboardCapture = DashboardCaptureStore.hasReference(this);
+        settingsWidgetTiles.clear();
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 14), Ui.dp(this, 10),
+                Ui.dp(this, 14), Ui.dp(this, 10));
+
+        LinearLayout toolbar = new LinearLayout(this);
+        toolbar.setGravity(Gravity.CENTER_VERTICAL);
+        toolbar.addView(Ui.title(this, "Wallpaper widgets", 21),
+                new LinearLayout.LayoutParams(0, Ui.dp(this, 48), 1f));
+        settingsCaptureDashboard = Ui.button(this,
+                hasDashboardCapture ? "Retake dashboard" : "Capture dashboard", true);
+        settingsCaptureDashboard.setSingleLine(true);
+        toolbar.addView(settingsCaptureDashboard, toolbarButtonParams(164));
+        settingsWidgetSnap = Ui.button(this, getString(R.string.widget_snap_on), false);
+        settingsWidgetSnap.setSingleLine(true);
+        toolbar.addView(settingsWidgetSnap, toolbarButtonParams(104));
+        Button reset = Ui.button(this, "Reset layout", false);
+        toolbar.addView(reset, toolbarButtonParams(118));
+        Button done = Ui.button(this, "Done", true);
+        toolbar.addView(done, toolbarButtonParams(90));
+        panel.addView(toolbar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 54)));
+
+        LinearLayout workspace = new LinearLayout(this);
+        workspace.setOrientation(LinearLayout.HORIZONTAL);
+        workspace.addView(preview, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        LinearLayout catalogue = settingsColumn();
+        catalogue.setPadding(Ui.dp(this, 10), Ui.dp(this, 8),
+                Ui.dp(this, 10), Ui.dp(this, 8));
+        catalogue.addView(settingsHeading("WIDGETS"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 26)));
+        ScrollView catalogueScroll = new ScrollView(this);
+        catalogueScroll.setFillViewport(true);
+        catalogueScroll.setVerticalScrollBarEnabled(true);
+        LinearLayout tileList = new LinearLayout(this);
+        tileList.setOrientation(LinearLayout.VERTICAL);
+        EnumSet<OverlayWidget> available = OverlayWidget.availableWhen(overdriveInstalled);
+        for (OverlayWidget widget : available) {
+            WallpaperWidgetTileView tile = new WallpaperWidgetTileView(this, widget);
+            tile.setOnClickListener(view -> toggleWidgetFromWorkspace(widget));
+            settingsWidgetTiles.put(widget, tile);
+            LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 112));
+            tileParams.bottomMargin = Ui.dp(this, widget == OverlayWidget.WEATHER ? 4 : 8);
+            tileList.addView(tile, tileParams);
+            if (widget == OverlayWidget.WEATHER) {
+                Button options = Ui.actionButton(this, "Weather settings", false);
+                options.setOnClickListener(view -> showWeatherWidgetOptions());
+                LinearLayout.LayoutParams optionsParams = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
+                optionsParams.bottomMargin = Ui.dp(this, 8);
+                tileList.addView(options, optionsParams);
+            }
+        }
+        catalogueScroll.addView(tileList, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        catalogue.addView(catalogueScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        LinearLayout.LayoutParams catalogueParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 342), ViewGroup.LayoutParams.MATCH_PARENT);
+        catalogueParams.leftMargin = Ui.dp(this, 12);
+        workspace.addView(catalogue, catalogueParams);
+        LinearLayout.LayoutParams workspaceParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 500));
+        workspaceParams.topMargin = Ui.dp(this, 12);
+        panel.addView(workspace, workspaceParams);
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        widgetsDialog = dialog;
+        settingsCaptureDashboard.setOnClickListener(view -> showDashboardCapturePrompt(
+                dialog, preview, settingsCaptureDashboard));
+        settingsWidgetSnap.setOnClickListener(view -> {
+            boolean enabled = !preview.snappingEnabled();
+            preview.setSnappingEnabled(enabled);
+            settingsWidgetSnap.setText(enabled
+                    ? R.string.widget_snap_on : R.string.widget_snap_off);
+        });
+        reset.setOnClickListener(view -> preview.resetPlacements());
+        done.setOnClickListener(view -> {
+            overlaySettings.setPlacements(preview.placements());
+            broadcastConfigurationChanged();
+            dialog.dismiss();
+        });
+        dialog.setOnDismissListener(ignored -> {
+            preview.release();
+            if (widgetsDialog == dialog) widgetsDialog = null;
+            if (settingsWidgetPreview == preview) settingsWidgetPreview = null;
+            settingsWidgetTiles.clear();
+            settingsCaptureDashboard = null;
+            settingsWidgetSnap = null;
+        });
+        dialog.show();
+        styleWideDialog(dialog, 1_220);
+        refreshSettingsStatus();
+        refreshVehicleTelemetryPreview(dialog);
+
+        if (selected != null) {
+            File previewFile = selected;
+            io.execute(() -> {
+                WallpaperPreviewDecoder.Decoded decoded = null;
+                try {
+                    decoded = WallpaperPreviewDecoder.decode(previewFile);
+                } catch (Exception ignored) {
+                    // The editor remains usable over its neutral fallback.
+                }
+                WallpaperPreviewDecoder.Decoded result = decoded;
+                runOnUiThread(() -> {
+                    if (result == null) return;
+                    if (dialog.isShowing()) {
+                        preview.setDecoded(result);
+                    } else if (result.bitmap != null && !result.bitmap.isRecycled()) {
+                        result.bitmap.recycle();
+                    }
+                });
+            });
+        }
+        if (hasDashboardCapture) {
+            io.execute(() -> {
+                Bitmap reference = DashboardCaptureStore.decodeReference(this);
+                runOnUiThread(() -> {
+                    if (reference == null) return;
+                    if (dialog.isShowing()) {
+                        preview.setDashboardReference(reference);
+                    } else if (!reference.isRecycled()) {
+                        reference.recycle();
+                    }
+                });
+            });
+        }
+    }
+
+    private LinearLayout.LayoutParams toolbarButtonParams(int widthDp) {
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                Ui.dp(this, widthDp), Ui.dp(this, 48));
+        params.leftMargin = Ui.dp(this, 8);
+        return params;
+    }
+
+    private void toggleWidgetFromWorkspace(OverlayWidget widget) {
+        if (widget == OverlayWidget.WEATHER && !overlaySettings.isWeatherEnabled()) {
+            enableWeatherFromSettings();
+            return;
+        }
+        boolean enable = !overlaySettings.isEnabled(widget);
+        overlaySettings.setEnabled(widget, enable);
+        broadcastConfigurationChanged();
+        refreshSettingsStatus();
+        if (enable && settingsWidgetPreview != null) {
+            settingsWidgetPreview.selectWidget(widget);
+        }
+    }
+
+    private void showWeatherWidgetOptions() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(Ui.dp(this, 22), Ui.dp(this, 16),
+                Ui.dp(this, 22), Ui.dp(this, 12));
+        panel.addView(Ui.title(this, "Weather settings", 21), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 42)));
+
+        panel.addView(settingsHeading("LOCATION"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 28)));
+
+        weatherAreaStatus = Ui.text(this, "", 13, Ui.TEXT);
+        weatherAreaStatus.setGravity(Gravity.CENTER_VERTICAL);
+        weatherAreaStatus.setLineSpacing(Ui.dp(this, 2), 1f);
+        panel.addView(weatherAreaStatus, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        weatherAreaButton = Ui.button(this, "Update location", true);
+        weatherAreaButton.setOnClickListener(view -> {
+            if (locationClient.isRequesting()) cancelLocationRequest(true);
+            else requestSavedArea(LocationRequestPurpose.UPDATE_SHARED_AREA);
+        });
+        panel.addView(weatherAreaButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
+
+        panel.addView(settingsHeading("AUTOMATIC UPDATES"), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 36)));
+
+        weatherDailyRefreshButton = Ui.actionButton(this, "", false);
+        weatherDailyRefreshButton.setOnClickListener(view -> {
+            savedAreaSettings.setDailyRefreshEnabled(
+                    !savedAreaSettings.isDailyRefreshEnabled());
+            refreshSavedAreaControls();
+            maybeRefreshSavedAreaDaily();
+        });
+        LinearLayout.LayoutParams dailyParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
+        panel.addView(weatherDailyRefreshButton, dailyParams);
+
+        TextView dailyHelp = Ui.text(this,
+                "When enabled, Deckscape checks your location once a day when the app opens. "
+                        + "Location is never accessed in the background.", 12, Ui.MUTED);
+        dailyHelp.setLineSpacing(Ui.dp(this, 2), 1f);
+        LinearLayout.LayoutParams helpParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 54));
+        helpParams.topMargin = Ui.dp(this, 6);
+        panel.addView(dailyHelp, helpParams);
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button done = Ui.button(this, "Done", true);
+        actions.addView(done, new LinearLayout.LayoutParams(
+                Ui.dp(this, 112), Ui.dp(this, 46)));
+        panel.addView(actions, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 58)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        done.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnDismissListener(ignored -> {
+            weatherAreaStatus = null;
+            weatherAreaButton = null;
+            weatherDailyRefreshButton = null;
+        });
+        dialog.show();
+        styleWideDialog(dialog, 620);
+        refreshSavedAreaControls();
+    }
+
+    private void showDashboardCapturePrompt(AlertDialog editor,
+                                            DashboardLayoutEditorView preview,
+                                            Button captureButton) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle(DashboardCaptureStore.hasReference(this)
+                        ? "Retake dashboard capture?" : "Capture the dashboard?")
+                .setMessage("Android will ask you to share the screen. Deckscape then hides "
+                        + "wallpaper widgets, opens Home for three seconds, and saves one "
+                        + "screenshot on this device for the layout preview. Widgets become "
+                        + "visible again automatically. Anything visible on Home will be "
+                        + "included in the saved image.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Continue", (ignored, which) -> {
+                    if (preview != null) {
+                        dashboardCaptureDraftPlacements = preview.placements();
+                    }
+                    editor.dismiss();
+                    beginDashboardCapture();
+                });
+        if (DashboardCaptureStore.hasReference(this)) {
+            builder.setNeutralButton("Delete saved capture", (ignored, which) -> {
+                DashboardCaptureStore.deleteReference(this);
+                if (preview != null) preview.setDashboardReference(null);
+                if (captureButton != null) captureButton.setText(R.string.capture_dashboard);
+                Toast.makeText(this, "Saved dashboard capture deleted.",
+                        Toast.LENGTH_LONG).show();
+            });
+        }
+        AlertDialog prompt = builder.create();
+        prompt.show();
+        styleDialog(prompt);
+    }
+
+    private void beginDashboardCapture() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            awaitingCaptureNotificationPermission = true;
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQUEST_CAPTURE_NOTIFICATIONS);
+            return;
+        }
+        startDashboardCaptureConsent();
+    }
+
+    private void startDashboardCaptureConsent() {
+        MediaProjectionManager manager = (MediaProjectionManager)
+                getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            dashboardCaptureDraftPlacements = null;
+            Toast.makeText(this, "Screen capture is unavailable on this device.",
+                    Toast.LENGTH_LONG).show();
+            showWallpaperWidgets();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        DashboardCaptureStore.begin(this, overlaySettings.enabledWidgets(), now);
+        scheduleInterruptedCaptureRecovery();
+        returnToWidgetWorkspace = true;
+        try {
+            Intent captureConsent = Build.VERSION.SDK_INT >= 34
+                    ? manager.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay())
+                    : manager.createScreenCaptureIntent();
+            startActivityForResult(captureConsent, REQUEST_DASHBOARD_CAPTURE);
+        } catch (Exception exception) {
+            DashboardCaptureStore.restoreWidgets(this);
+            DashboardCaptureStore.clearReturnToWidgets(this);
+            returnToWidgetWorkspace = false;
+            Toast.makeText(this, "Android could not open screen-capture permission.",
+                    Toast.LENGTH_LONG).show();
+            settingsButton.post(this::showWallpaperWidgets);
+        }
+    }
+
+    private void scheduleInterruptedCaptureRecovery() {
+        long delayMillis = DashboardCaptureStore.recoveryDelayMillis(this,
+                System.currentTimeMillis());
+        if (delayMillis < 0) return;
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (!DashboardCaptureStore.recoverInterrupted(this,
+                    System.currentTimeMillis())) return;
+            if (overlaySettings != null) refreshSettingsStatus();
+            Toast.makeText(this,
+                    "Capture stopped. Wallpaper widgets are visible again.",
+                    Toast.LENGTH_LONG).show();
+        }, delayMillis + 250L);
     }
 
     private LinearLayout settingsColumn() {
@@ -1583,41 +2154,87 @@ public final class MainActivity extends Activity {
     private void enableDayNightFromSettings() {
         if (!dayNightSettings.hasCompletePools()) {
             Toast.makeText(this,
-                    "Add slideshow wallpapers for both Day and Night before enabling the schedule.",
+                    "Add at least one Day wallpaper and one Night wallpaper to the slideshow first.",
                     Toast.LENGTH_LONG).show();
             refreshSettingsStatus();
             return;
         }
         if (dayNightSettings.mode() == ScheduleMode.AUTO && !hasAmbientLightSensor()
-                && !dayNightSettings.hasCoarseLocation()) {
-            requestAutomaticLocation(true);
+                && !savedAreaSettings.hasLocation()) {
+            requestSavedArea(LocationRequestPurpose.ENABLE_DAY_NIGHT);
             return;
         }
         dayNightSettings.setEnabled(true);
         broadcastConfigurationChanged();
+        gridAdapter.refreshLibraryState(isWallpaperActive());
         refreshSettingsStatus();
     }
 
-    private void requestAutomaticLocation(boolean enableAfter) {
-        pendingEnableDayNight = enableAfter;
+    private void enableWeatherFromSettings() {
+        if (!overlaySettings.hasWeatherDisclosure()) {
+            showWeatherDisclosure();
+            return;
+        }
+        finishEnablingWeather();
+    }
+
+    private void showWeatherDisclosure() {
+        AlertDialog disclosure = new AlertDialog.Builder(this)
+                .setTitle(R.string.weather_disclosure_title)
+                .setMessage(R.string.weather_disclosure_message)
+                .setNegativeButton("Not now", null)
+                .setPositiveButton("Enable weather", (ignored, which) -> {
+                    overlaySettings.acknowledgeWeatherDisclosure();
+                    finishEnablingWeather();
+                })
+                .create();
+        disclosure.show();
+        styleDialog(disclosure);
+    }
+
+    private void finishEnablingWeather() {
+        if (savedAreaSettings.hasLocation()) {
+            overlaySettings.setWeatherEnabled(true);
+            broadcastConfigurationChanged();
+            refreshSettingsStatus();
+            return;
+        }
+        requestSavedArea(LocationRequestPurpose.ENABLE_WEATHER);
+    }
+
+    private void requestSavedArea(LocationRequestPurpose purpose) {
+        locationRequestPurpose = purpose == null ? LocationRequestPurpose.UPDATE_SHARED_AREA
+                : purpose;
         if (!hasUsableForegroundLocationPermission()) {
+            if (locationRequestPurpose == LocationRequestPurpose.DAILY_REFRESH) {
+                locationRequestPurpose = LocationRequestPurpose.NONE;
+                return;
+            }
             showLocationPermissionExplanation();
             return;
         }
-        resolveAutomaticLocation();
+        resolveSavedArea();
     }
 
     private void showLocationPermissionExplanation() {
+        int message = locationRequestPurpose == LocationRequestPurpose.ENABLE_WEATHER
+                ? R.string.weather_location_permission_message
+                : locationRequestPurpose == LocationRequestPurpose.ENABLE_DAY_NIGHT
+                ? R.string.location_permission_message
+                : R.string.shared_area_permission_message;
         AlertDialog explanation = new AlertDialog.Builder(this)
                 .setTitle(R.string.location_permission_title)
-                .setMessage(R.string.location_permission_message)
+                .setMessage(message)
                 .setNegativeButton("Not now", (ignored, which) -> {
-                    boolean shouldEnable = pendingEnableDayNight;
-                    pendingEnableDayNight = false;
+                    LocationRequestPurpose purpose = locationRequestPurpose;
+                    locationRequestPurpose = LocationRequestPurpose.NONE;
                     refreshSettingsStatus();
-                    if (shouldEnable) {
+                    if (purpose == LocationRequestPurpose.ENABLE_WEATHER) {
+                        Toast.makeText(this, "Weather remains off until a location is set.",
+                                Toast.LENGTH_LONG).show();
+                    } else if (purpose == LocationRequestPurpose.ENABLE_DAY_NIGHT) {
                         Toast.makeText(this,
-                                "Day & Night remains off. Choose Manual or enable GPS access.",
+                                "Day & Night remains off. Choose Manual or allow location access.",
                                 Toast.LENGTH_LONG).show();
                     }
                 })
@@ -1627,7 +2244,7 @@ public final class MainActivity extends Activity {
                         REQUEST_FOREGROUND_LOCATION))
                 .create();
         explanation.setOnCancelListener(ignored -> {
-            pendingEnableDayNight = false;
+            locationRequestPurpose = LocationRequestPurpose.NONE;
             refreshSettingsStatus();
         });
         explanation.show();
@@ -1642,54 +2259,85 @@ public final class MainActivity extends Activity {
         return LocationPermissionPolicy.isSufficient(Build.VERSION.SDK_INT, fine, coarse);
     }
 
-    private void resolveAutomaticLocation() {
-        if (settingsLocationButton != null) {
-            settingsLocationButton.setText(R.string.cancel_location_search);
-            settingsLocationButton.setEnabled(true);
-        }
+    private void resolveSavedArea() {
+        savedAreaSettings.recordRefreshAttempt(System.currentTimeMillis());
+        refreshSavedAreaControls();
         locationClient.request(new CoarseLocationClient.Callback() {
             @Override
             public void onLocation(Location location, boolean cached) {
-                dayNightSettings.setCoarseLocation(location.getLatitude(),
+                savedAreaSettings.setLocation(location.getLatitude(),
                         location.getLongitude(), location.getTime() > 0
                                 ? location.getTime() : System.currentTimeMillis());
-                boolean shouldEnable = pendingEnableDayNight;
-                pendingEnableDayNight = false;
-                if (shouldEnable) dayNightSettings.setEnabled(true);
+                LocationRequestPurpose purpose = locationRequestPurpose;
+                locationRequestPurpose = LocationRequestPurpose.NONE;
+                if (purpose == LocationRequestPurpose.ENABLE_DAY_NIGHT) {
+                    dayNightSettings.setEnabled(true);
+                }
+                if (purpose == LocationRequestPurpose.ENABLE_WEATHER) {
+                    overlaySettings.setWeatherEnabled(true);
+                }
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
-                Toast.makeText(MainActivity.this,
-                        cached
-                                ? "Updated from a recent on-device location; no new GPS fix was needed."
-                                : "Location updated; today's sunrise and sunset are ready.",
-                        Toast.LENGTH_LONG).show();
+                if (purpose == LocationRequestPurpose.UPDATE_SHARED_AREA) {
+                    Toast.makeText(MainActivity.this, cached
+                                    ? "Location checked. The recent location is still current."
+                                    : "Location updated.",
+                            Toast.LENGTH_LONG).show();
+                } else if (purpose == LocationRequestPurpose.ENABLE_DAY_NIGHT) {
+                    Toast.makeText(MainActivity.this,
+                            "Location updated. Sunrise and sunset times are ready.",
+                            Toast.LENGTH_LONG).show();
+                }
             }
 
             @Override
             public void onError(String message) {
-                boolean shouldEnable = pendingEnableDayNight;
-                pendingEnableDayNight = false;
+                LocationRequestPurpose purpose = locationRequestPurpose;
+                locationRequestPurpose = LocationRequestPurpose.NONE;
                 refreshSettingsStatus();
-                Toast.makeText(MainActivity.this,
-                        shouldEnable ? message + ". Day & Night remains off." : message,
-                        Toast.LENGTH_LONG).show();
+                if (purpose != LocationRequestPurpose.DAILY_REFRESH) {
+                    Toast.makeText(MainActivity.this,
+                            purpose == LocationRequestPurpose.ENABLE_WEATHER
+                                    ? message + ". Weather remains off."
+                                    : purpose == LocationRequestPurpose.ENABLE_DAY_NIGHT
+                                    ? message + ". Day & Night remains off; choose Manual or try again."
+                                    : message,
+                            Toast.LENGTH_LONG).show();
+                }
             }
         });
+        refreshSavedAreaControls();
     }
 
-    private void cancelAutomaticLocation(boolean notify) {
+    private void cancelLocationRequest(boolean notify) {
         if (!locationClient.isRequesting()) return;
         locationClient.cancel();
-        pendingEnableDayNight = false;
+        locationRequestPurpose = LocationRequestPurpose.NONE;
         refreshSettingsStatus();
         if (notify) {
-            Toast.makeText(this, "Location search cancelled. Your schedule is unchanged.",
+            Toast.makeText(this, "Location update cancelled.",
                     Toast.LENGTH_SHORT).show();
         }
     }
 
+    private void maybeRefreshSavedAreaDaily() {
+        if (locationClient == null || locationClient.isRequesting()
+                || !hasUsableForegroundLocationPermission()) return;
+        boolean areaInUse = (overlaySettings != null && overlaySettings.isWeatherEnabled())
+                || (dayNightSettings != null && dayNightSettings.isEnabled()
+                && dayNightSettings.mode() == ScheduleMode.AUTO && !hasAmbientLightSensor());
+        long now = System.currentTimeMillis();
+        if (!SavedAreaRefreshPolicy.shouldRefresh(savedAreaSettings.isDailyRefreshEnabled(),
+                areaInUse, now, savedAreaSettings.lastRefreshAttempt())) return;
+        requestSavedArea(LocationRequestPurpose.DAILY_REFRESH);
+    }
+
     private void refreshSettingsStatus() {
+        refreshOverlaySettingsStatus();
+        refreshSavedAreaControls();
         if (settingsDayNightStatus == null || settingsDayNightToggle == null) return;
+        boolean enabled = dayNightSettings.isEnabled();
+        int downloadedCount = WallpaperStore.listDownloaded(this).size();
         int dayCount = dayNightSettings.eligibleCount(DayPhase.DAY);
         int nightCount = dayNightSettings.eligibleCount(DayPhase.NIGHT);
         DayPhase phase = dayNightSettings.currentPhase(System.currentTimeMillis(), null);
@@ -1698,43 +2346,121 @@ public final class MainActivity extends Activity {
             method = "Manual " + DayPhaseResolver.formatMinute(dayNightSettings.dayMinute())
                     + " / " + DayPhaseResolver.formatMinute(dayNightSettings.nightMinute());
         } else if (hasAmbientLightSensor()) {
-            method = "Automatic ambient-light sensor";
-        } else if (dayNightSettings.hasCoarseLocation()) {
-            method = "Automatic on-device sunrise/sunset";
+            method = "Automatic • ambient light";
+        } else if (savedAreaSettings.hasLocation()) {
+            method = "Automatic • sunrise and sunset";
         } else {
-            method = "Automatic needs location • manual times used for now";
+            method = "Location needed • using manual times for now";
         }
-        settingsDayNightStatus.setText(getString(R.string.day_night_status,
-                dayNightSettings.isEnabled() ? "ON" : "OFF", phase.label,
-                getResources().getQuantityString(R.plurals.day_wallpapers, dayCount, dayCount),
-                getResources().getQuantityString(
-                        R.plurals.night_wallpapers, nightCount, nightCount), method));
-        settingsDayNightStatus.setTextColor(dayNightSettings.isEnabled() ? Ui.GREEN : Ui.MUTED);
-        settingsDayNightToggle.setText(dayNightSettings.isEnabled()
+        if (enabled) {
+            String assignment = dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO
+                    ? "Auto-sorted by brightness" : "Manual wallpaper roles";
+            settingsDayNightStatus.setText(getString(R.string.day_night_status,
+                    "ON", phase.label,
+                    getResources().getQuantityString(
+                            R.plurals.day_wallpapers, dayCount, dayCount),
+                    getResources().getQuantityString(
+                            R.plurals.night_wallpapers, nightCount, nightCount),
+                    assignment + " • " + method));
+        } else {
+            settingsDayNightStatus.setText(getResources().getQuantityString(
+                    R.plurals.day_night_off_library_status,
+                    downloadedCount, downloadedCount));
+        }
+        settingsDayNightStatus.setTextColor(enabled ? Ui.GREEN : Ui.MUTED);
+        settingsDayNightToggle.setText(enabled
                 ? "Turn Day & Night off" : "Turn Day & Night on");
-        settingsDayNightToggle.setTextColor(dayNightSettings.isEnabled() ? Ui.CORAL : Ui.NAV);
-        settingsDayNightToggle.setBackground(Ui.rounded(dayNightSettings.isEnabled()
+        settingsDayNightToggle.setTextColor(enabled ? Ui.CORAL : Ui.NAV);
+        settingsDayNightToggle.setBackground(Ui.rounded(enabled
                         ? Ui.SURFACE_HIGH : Ui.CYAN, Ui.dp(this, 12),
-                dayNightSettings.isEnabled() ? Ui.CORAL : Ui.CYAN, Ui.dp(this, 1)));
+                enabled ? Ui.CORAL : Ui.CYAN, Ui.dp(this, 1)));
+        if (settingsDayNightOptions != null) {
+            settingsDayNightOptions.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        }
+        if (settingsAssignmentMode != null && !automaticAssignmentInProgress
+                && settingsAssignmentMode.getSelectedItemPosition()
+                != dayNightSettings.assignmentMode().ordinal()) {
+            settingsAssignmentMode.setSelection(dayNightSettings.assignmentMode().ordinal());
+        }
         if (settingsScheduleMode != null
                 && settingsScheduleMode.getSelectedItemPosition()
                 != dayNightSettings.mode().ordinal()) {
             settingsScheduleMode.setSelection(dayNightSettings.mode().ordinal());
         }
         refreshScheduleTimeControls();
+    }
+
+    private void refreshSavedAreaControls() {
+        boolean requesting = locationClient != null && locationClient.isRequesting();
+        CharSequence savedDate = savedAreaSettings.hasLocation()
+                ? android.text.format.DateFormat.format(
+                "dd MMM yyyy", new Date(savedAreaSettings.locationTime())) : null;
         if (settingsLocationButton != null) {
-            if (locationClient.isRequesting()) {
-                settingsLocationButton.setText(R.string.cancel_location_search);
-            } else if (dayNightSettings.hasCoarseLocation()) {
-                settingsLocationButton.setText(getString(R.string.refresh_location_saved,
-                        android.text.format.DateFormat.format(
-                                "dd MMM", new Date(dayNightSettings.locationTime()))));
-            } else {
-                settingsLocationButton.setText(R.string.refresh_location);
-            }
+            CharSequence label = requesting ? getString(R.string.cancel_location_search)
+                    : savedDate == null ? getString(R.string.update_saved_area)
+                    : getString(R.string.update_saved_area_saved, savedDate);
+            settingsLocationButton.setText(label);
             settingsLocationButton.setEnabled(true);
-            settingsLocationButton.setVisibility(hasAmbientLightSensor() ? View.GONE : View.VISIBLE);
+            settingsLocationButton.setVisibility(hasAmbientLightSensor()
+                    ? View.GONE : View.VISIBLE);
         }
+        if (weatherAreaButton != null) {
+            weatherAreaButton.setText(requesting ? R.string.cancel_location_search
+                    : R.string.update_saved_area);
+            weatherAreaButton.setEnabled(true);
+        }
+        if (weatherAreaStatus != null) {
+            weatherAreaStatus.setText(savedDate == null
+                    ? "No location set. Update the location to show local weather."
+                    : "Location last updated " + savedDate + ".");
+        }
+        if (weatherDailyRefreshButton != null) {
+            weatherDailyRefreshButton.setText(savedAreaSettings.isDailyRefreshEnabled()
+                    ? "Daily location update: on" : "Daily location update: off");
+        }
+    }
+
+    private void refreshOverlaySettingsStatus() {
+        if (settingsWidgetPreview == null && settingsWidgetTiles.isEmpty()
+                && settingsCaptureDashboard == null) return;
+        EnumSet<OverlayWidget> enabled = overlaySettings.enabledWidgets();
+        WeatherSnapshot weather = new WeatherStore(this).read();
+        if (weather != null && savedAreaSettings.hasLocation()
+                && !weather.matches(savedAreaSettings.latitudeTenths(),
+                savedAreaSettings.longitudeTenths())) {
+            weather = null;
+        }
+        VehicleTelemetrySnapshot vehicle = VehicleTelemetryStore.latest();
+        if (settingsWidgetPreview != null) {
+            settingsWidgetPreview.setWidgetState(enabled, weather, vehicle);
+        }
+        for (OverlayWidget widget : settingsWidgetTiles.keySet()) {
+            WallpaperWidgetTileView tile = settingsWidgetTiles.get(widget);
+            if (tile != null) tile.setState(enabled.contains(widget), weather, vehicle);
+        }
+        if (settingsCaptureDashboard != null) {
+            settingsCaptureDashboard.setText(DashboardCaptureStore.hasReference(this)
+                    ? "Retake dashboard" : "Capture dashboard");
+        }
+    }
+
+    private void refreshVehicleTelemetryPreview(AlertDialog owner) {
+        VehicleTelemetryProvider provider = new OverdriveVehicleTelemetryProvider(this);
+        if (!provider.isAvailable()) return;
+        io.execute(() -> {
+            try {
+                VehicleTelemetrySnapshot updated = provider.fetch(
+                        EnumSet.allOf(VehicleTelemetryMetric.class),
+                        System.currentTimeMillis());
+                VehicleTelemetryStore.update(updated);
+            } catch (IOException exception) {
+                // The catalogue keeps the last in-memory values, or shows unavailable data.
+            }
+            runOnUiThread(() -> {
+                if (widgetsDialog != owner || !owner.isShowing()) return;
+                refreshOverlaySettingsStatus();
+            });
+        });
     }
 
     private void refreshScheduleTimeControls() {
@@ -1765,7 +2491,7 @@ public final class MainActivity extends Activity {
         DayPhaseResolver.SolarTimes times = dayNightSettings.solarTimes(
                 System.currentTimeMillis());
         if (times == null) {
-            int unavailable = dayNightSettings.hasCoarseLocation()
+            int unavailable = savedAreaSettings.hasLocation()
                     ? R.string.solar_time_unavailable : R.string.location_needed;
             settingsDayCalculatedTime.setText(unavailable);
             settingsNightCalculatedTime.setText(unavailable);
@@ -1779,7 +2505,7 @@ public final class MainActivity extends Activity {
 
     private String storageSummary() {
         return String.format(Locale.ROOT,
-                "Preview cache: %.1f MB / 96 MB\nDownloaded library: %.1f MB",
+                "Saved previews: %.1f MB / 96 MB\nDownloaded wallpapers: %.1f MB",
                 previewCache.diskBytes() / (1024.0 * 1024.0),
                 WallpaperStore.totalBytes(this) / (1024.0 * 1024.0));
     }
@@ -1796,6 +2522,13 @@ public final class MainActivity extends Activity {
 
     private static String[] scheduleModeLabels() {
         ScheduleMode[] values = ScheduleMode.values();
+        String[] labels = new String[values.length];
+        for (int index = 0; index < values.length; index++) labels[index] = values[index].label;
+        return labels;
+    }
+
+    private static String[] assignmentModeLabels() {
+        DayNightAssignmentMode[] values = DayNightAssignmentMode.values();
         String[] labels = new String[values.length];
         for (int index = 0; index < values.length; index++) labels[index] = values[index].label;
         return labels;
@@ -1821,9 +2554,9 @@ public final class MainActivity extends Activity {
         String message = AppMetadata.versionLabel() + "\n"
                 + "Landscape wallpapers for Android head units\n\n"
                 + "Created by Paul Hepple (@MetalHepple) and released under the MIT Licence.\n"
-                + "No accounts, advertising, analytics or tracking. A one-time foreground "
-                + "location fix is rounded and kept only on-device when you enable automatic "
-                + "Day & Night scheduling.";
+                + "No accounts, advertising, analytics or tracking. Location is used only for "
+                + "features you enable, stored approximately on this device, and never accessed "
+                + "in the background.";
         TextView copy = Ui.text(this, message, 13, Ui.MUTED);
         copy.setLineSpacing(Ui.dp(this, 3), 1f);
         panel.addView(copy, new LinearLayout.LayoutParams(
@@ -2045,11 +2778,11 @@ public final class MainActivity extends Activity {
         content.append("DECKSCAPE\nCopyright © 2026 Paul Hepple\n\n")
                 .append(readAssetText("LICENSE")).append("\n\n")
                 .append(readAssetText("THIRD_PARTY_NOTICES.md")).append("\n\n")
-                .append("LIVE REPOSITORY METADATA\n")
+                .append("SOURCE LICENCES\n")
                 .append("Repository licences may not cover individual collected wallpaper images.\n\n");
         RepositoryMetadata metadata = aboutMetadata;
         if (metadata == null || metadata.licenses.isEmpty()) {
-            content.append("Licence metadata is not cached yet. Reopen About while online to refresh it.");
+            content.append("Source licence details are not available yet. Reopen About while online to load them.");
         } else {
             for (RepositoryMetadata.SourceLicense license : metadata.licenses.values()) {
                 content.append(license.repositoryName).append(" — ")

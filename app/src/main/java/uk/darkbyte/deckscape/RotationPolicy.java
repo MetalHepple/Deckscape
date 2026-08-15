@@ -4,10 +4,14 @@ package uk.darkbyte.deckscape;
 final class RotationPolicy {
     private RotationPolicy() {}
 
+    static boolean isSlideshowEnabled(long intervalMillis) {
+        return intervalMillis > 0;
+    }
+
     static boolean shouldRotate(long nowMillis, long lastSwitchMillis,
                                 long intervalMillis, int itemCount) {
         return itemCount > 1
-                && intervalMillis > 0
+                && isSlideshowEnabled(intervalMillis)
                 && lastSwitchMillis > 0
                 && nowMillis - lastSwitchMillis >= intervalMillis;
     }

@@ -11,6 +11,24 @@ bandwidth-saving previews at `wsrv.nl`. Its source is available under the
 BSD 3-Clause licence. The hosted service is used as-is and is not operated by
 the Deckscape project. Users can disable it from **Settings → Data & storage**.
 
+## Weather data
+
+[Open-Meteo](https://open-meteo.com/) supplies the optional current-weather
+data. The feature is off by default and is used only after a separate location
+disclosure. Open-Meteo data is provided under the Creative Commons Attribution
+4.0 International licence (CC BY 4.0). Deckscape rounds the displayed
+temperature and maps WMO condition codes into its own text and original vector
+icons; Open-Meteo does not endorse Deckscape.
+
+## Optional vehicle-data integration
+
+[Overdrive](https://github.com/yash-srivastava/Overdrive-release) is a separate
+MIT-licensed application that can supply optional vehicle cards over its
+same-device, read-only telemetry preview. Deckscape detects the installed
+package and draws its application icon at runtime; it does not bundle,
+redistribute, modify, or control Overdrive, and Overdrive does not endorse
+Deckscape. The integration is disabled unless the user turns on a vehicle card.
+
 ## Default catalogs
 
 - [fr0st-xyz/wallz](https://github.com/fr0st-xyz/wallz) declares GPL-3.0 at the

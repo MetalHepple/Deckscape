@@ -134,11 +134,6 @@ final class WallpaperStore {
         }
     }
 
-    /** Returns whether an installed wallpaper participates in the slideshow. */
-    static boolean isIncluded(Context context, File file) {
-        return file != null && file.isFile() && !excludedNames(context).contains(file.getName());
-    }
-
     /** Adds a downloaded wallpaper to rotation without necessarily changing the current image. */
     static File include(Context context, File file) throws IOException {
         File installed = requireLibraryFile(context, file);
@@ -197,13 +192,13 @@ final class WallpaperStore {
 
     /** Chooses the next eligible file, preferring a wallpaper specific to the new period. */
     static File nextForPhase(Context context, File current, DayPhase phase) {
-        List<File> eligible = new DayNightSettings(context).eligibleFiles(phase);
+        DayNightSettings settings = new DayNightSettings(context);
+        List<File> eligible = settings.eligibleFiles(phase);
         if (eligible.isEmpty()) return null;
-        WallpaperProfileStore profiles = new WallpaperProfileStore(context);
         int start = current == null ? -1 : eligible.indexOf(current);
         for (int offset = 1; offset <= eligible.size(); offset++) {
             File candidate = eligible.get(Math.floorMod(start + offset, eligible.size()));
-            if (profiles.get(candidate).role != DayNightRole.BOTH) return candidate;
+            if (settings.effectiveRole(candidate) != DayNightRole.BOTH) return candidate;
         }
         return current != null && eligible.contains(current) ? current
                 : eligible.get(Math.floorMod(start + 1, eligible.size()));

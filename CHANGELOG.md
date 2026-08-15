@@ -3,6 +3,95 @@
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 
+## [Unreleased]
+
+## [1.8.0] - 2026-08-15
+
+### Added
+
+- Optional passive clock/date and current-weather cards can be positioned
+  independently by dragging them around a full 16:9 dashboard preview. The
+  editor uses a private, user-consented capture of the device's actual Home
+  screen and contains no simulated dashboard template. Capturing temporarily
+  hides all cards, restores their previous states on every exit path, and
+  supports retake and delete controls. Nearby cards can snap into horizontal or
+  vertical alignment, with snapping switchable off in the editor.
+- Weather is off by default, has a separate Open-Meteo location disclosure,
+  refreshes at most hourly while the wallpaper is visible, and keeps a bounded
+  validated offline snapshot. Weather options can update the one approximate
+  area shared with automatic Day & Night and switch its once-daily foreground
+  refresh on or off.
+- Optional Overdrive-powered cards show SOC, SOH, remaining battery energy,
+  range, 12 V voltage, charging, measured cabin/outdoor/pack temperatures, and
+  four tyre pressures and temperatures. They appear only when Overdrive is
+  installed and use that installed app's icon rather than bundling its brand
+  asset. The vehicle-neutral provider interface uses one bounded, read-only
+  loopback request, discards unrelated fields, and retains no vehicle telemetry
+  on disk.
+
+### Changed
+
+- Browse and Library wallpaper cards now use one shared action-row and Day/Night
+  badge implementation. Tapping the image opens its preview or options, so the
+  redundant Preview button is removed. Downloaded cards consistently offer
+  Set, Delete, and Options; Delete removes both the local file and its slideshow
+  membership, and successful Set actions no longer show a transient message.
+- Wallpaper Preview now has one contextual **Get**, **Set**, **Selected**, or
+  **Now showing** action beside **Close**. Successful downloads update that
+  action silently, while selected cards clearly distinguish an inactive
+  Deckscape wallpaper from one currently showing.
+- User-facing copy has been reviewed across browsing, setup, Settings, Widgets,
+  location, capture, preview, storage, About, and notification flows. Labels and
+  messages now describe the action or outcome without exposing internal design
+  terms or development-history context.
+- Passive clock, weather, and vehicle cards now share one **Widgets** workspace:
+  enabled cards drag on a large dashboard canvas while a vertically scrollable
+  catalogue shows live ON/OFF examples for every available type. Capture,
+  snapping, reset, and Done use one consistently sized top toolbar; redundant
+  status paragraphs, provider buttons, and the separate arrangement screen are
+  removed. The top-bar slideshow interval and **Next** controls have been
+  replaced by the **Widgets** control; interval configuration remains in
+  Settings.
+- Android's live-wallpaper setup preview deliberately omits wallpaper cards so
+  it shows an unobstructed wallpaper. Static clock cards redraw on the exact
+  device-minute boundary and react immediately to device date, time, or
+  time-zone changes. Solar times are recalculated locally for the current date.
+- The Widgets toolbar now has clear separation from the canvas and catalogue.
+  Selecting Weather with an existing saved area is silent; explicit saved-area
+  updates retain their completion feedback.
+- Completing or failing a dashboard capture now uses a transparent foreground
+  bridge to return automatically to the same Widgets workspace within Android
+  10's background-return window. Its notification remains available only as a
+  fallback if a device refuses to bring Deckscape's initiating task forward.
+- With Day & Night off, every downloaded Library wallpaper now participates in
+  rotation while the slideshow is on, and the Day/Night filters, badges, and
+  assignment controls are hidden. Day & Night also offers **Auto by
+  brightness**, which measures a small local decode of each wallpaper and
+  assigns the darker half to Night and the brighter half to Day. Shared badge
+  geometry keeps the state and assignment tags aligned.
+- Library cards now reserve highlighted borders and the **Now showing** badge
+  for the active wallpaper, using **Selected** when Deckscape is not active,
+  instead of repeating **In slideshow** on every download. Browse gives every
+  on-device wallpaper a stronger green border and badge. The Library footer has
+  more space around its controls, and its slideshow switch can freeze the
+  selected wallpaper without deleting other downloads; Settings names the same
+  zero-interval mode **Off – keep current**.
+
+### Security and reliability
+
+- Dashboard captures require Android's system consent each time, stay in
+  app-private storage, and are never uploaded. Interrupted, cancelled, failed,
+  and timed-out captures restore all previously enabled cards, with a recovery
+  check on the next app launch.
+- Weather uses one fixed HTTPS Open-Meteo endpoint with redirects disabled and
+  strict response, size, type, timestamp, coordinate, and temperature checks.
+  Requests stop with the wallpaper lifecycle and the bounded cached result is
+  tied to the saved approximate area.
+- Vehicle telemetry is limited to a fixed IPv4 loopback endpoint with short
+  timeouts and bounded headers and bodies. Only display fields on an explicit
+  allowlist are accepted; unrelated vehicle data is discarded and accepted
+  values remain in process memory only.
+
 ## [1.7.3] - 2026-08-13
 
 ### Changed
@@ -242,6 +331,10 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
+[Unreleased]: https://github.com/MetalHepple/Deckscape/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/MetalHepple/Deckscape/compare/v1.7.3...v1.8.0
+[1.7.3]: https://github.com/MetalHepple/Deckscape/compare/v1.7.2...v1.7.3
+[1.7.2]: https://github.com/MetalHepple/Deckscape/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/MetalHepple/Deckscape/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/MetalHepple/Deckscape/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/MetalHepple/Deckscape/compare/v1.5.0...v1.6.0

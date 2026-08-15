@@ -6,7 +6,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -24,46 +23,52 @@ final class SlideshowGridAdapter extends BaseAdapter {
     interface Listener {
         void onSet(File file);
 
-        void onSetIncluded(File file, boolean included);
-
         void onCycleRole(File file, DayNightRole currentRole);
 
         void onOptions(File file);
+
+        void onDelete(File file);
     }
 
     private final Context context;
     private final PreviewCache previews;
     private final Listener listener;
-    private final WallpaperProfileStore profiles;
+    private final DayNightSettings dayNight;
     private final List<File> allFiles = new ArrayList<>();
     private final List<File> files = new ArrayList<>();
     private final Set<String> includedNames = new HashSet<>();
     private String currentName = "";
     private LibraryGroup group = LibraryGroup.ALL;
+    private boolean dayNightEnabled;
+    private boolean wallpaperActive;
 
-    SlideshowGridAdapter(Context context, PreviewCache previews, Listener listener) {
+    SlideshowGridAdapter(Context context, PreviewCache previews, boolean engineActive,
+                         Listener listener) {
         this.context = context;
         this.previews = previews;
         this.listener = listener;
-        profiles = new WallpaperProfileStore(context);
-        refresh();
+        dayNight = new DayNightSettings(context);
+        refresh(engineActive);
     }
 
     /** Reloads downloaded files, slideshow membership, and current selection from storage. */
-    void refresh() {
+    void refresh(boolean engineActive) {
+        wallpaperActive = engineActive;
         allFiles.clear();
         allFiles.addAll(WallpaperStore.listDownloaded(context));
+        dayNightEnabled = dayNight.isEnabled();
         List<File> included = WallpaperStore.list(context);
         includedNames.clear();
         for (File file : included) includedNames.add(file.getName());
-        File current = WallpaperStore.current(context, included);
+        File current = WallpaperStore.current(context,
+                dayNightEnabled ? included : allFiles);
         currentName = current == null ? "" : current.getName();
         applyGroup();
     }
 
     /** Shows all downloads or the wallpapers eligible for one scheduled period. */
     void setGroup(LibraryGroup value) {
-        group = value == null ? LibraryGroup.ALL : value;
+        group = !dayNightEnabled || value == null ? LibraryGroup.ALL : value;
         applyGroup();
     }
 
@@ -78,7 +83,8 @@ final class SlideshowGridAdapter extends BaseAdapter {
     int groupCount(LibraryGroup value) {
         int count = 0;
         for (File file : allFiles) {
-            if ((value == null ? LibraryGroup.ALL : value).includes(profiles.get(file).role)) {
+            if ((value == null ? LibraryGroup.ALL : value).includes(
+                    dayNight.effectiveRole(file))) {
                 count++;
             }
         }
@@ -88,13 +94,20 @@ final class SlideshowGridAdapter extends BaseAdapter {
     private void applyGroup() {
         files.clear();
         for (File file : allFiles) {
-            if (group.includes(profiles.get(file).role)) files.add(file);
+            if (!dayNightEnabled || group.includes(dayNight.effectiveRole(file))) files.add(file);
         }
         notifyDataSetChanged();
     }
 
     int includedCount() {
-        return includedNames.size();
+        return dayNightEnabled ? includedNames.size() : allFiles.size();
+    }
+
+    String currentDisplayName() {
+        for (File file : allFiles) {
+            if (file.getName().equals(currentName)) return WallpaperStore.displayName(file);
+        }
+        return "Current wallpaper";
     }
 
     @Override
@@ -115,27 +128,32 @@ final class SlideshowGridAdapter extends BaseAdapter {
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
         File file = getItem(position);
-        boolean included = includedNames.contains(file.getName());
-        boolean current = file.getName().equals(currentName);
-        WallpaperProfile profile = profiles.get(file);
+        boolean included = !dayNightEnabled || includedNames.contains(file.getName());
+        boolean selected = file.getName().equals(currentName);
+        boolean active = selected && wallpaperActive;
 
         LinearLayout card = new LinearLayout(context);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(Ui.dp(context, 6), Ui.dp(context, 6),
                 Ui.dp(context, 6), Ui.dp(context, 6));
-        int cardColor = current ? Ui.CYAN_DARK : included ? Ui.GREEN_DARK : Ui.SURFACE;
-        int borderColor = current ? Ui.CYAN : included ? Ui.GREEN : Ui.DIVIDER;
+        int cardColor = active ? Ui.CYAN_DARK : selected ? Ui.GREEN_DARK : Ui.SURFACE;
+        int borderColor = active ? Ui.CYAN : selected ? Ui.GREEN : Ui.DIVIDER;
         card.setBackground(Ui.rounded(cardColor, Ui.dp(context, 14), borderColor,
-                Ui.dp(context, current ? 3 : 1)));
+                Ui.dp(context, active ? 3 : selected ? 2 : 1)));
         card.setContentDescription(WallpaperStore.displayName(file)
-                + (current ? ", now showing" : included
+                + (active ? ", now showing" : selected ? ", selected" : included
                 ? ", included in slideshow" : ", downloaded, not in slideshow"));
 
         FrameLayout imageFrame = new FrameLayout(context);
         imageFrame.setBackground(Ui.rounded(Ui.BACKGROUND, Ui.dp(context, 10)));
         imageFrame.setClipToOutline(true);
+        imageFrame.setClickable(true);
+        imageFrame.setFocusable(true);
+        imageFrame.setContentDescription("Preview and options for "
+                + WallpaperStore.displayName(file));
+        imageFrame.setOnClickListener(view -> listener.onOptions(file));
         card.addView(imageFrame, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 110)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 122)));
 
         ImageView image = new ImageView(context);
         image.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -159,41 +177,29 @@ final class SlideshowGridAdapter extends BaseAdapter {
             }
         });
 
-        String badgeLabel = current ? "NOW SHOWING" : included ? "IN SLIDESHOW" : "ON DEVICE";
-        int badgeColor = current ? Ui.CYAN : included ? Ui.GREEN : Ui.SURFACE_HIGH;
-        TextView badge = Ui.title(context, badgeLabel, 9);
-        badge.setTextColor(current || included ? Ui.NAV : Ui.MUTED);
-        badge.setGravity(Gravity.CENTER);
-        badge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
-        badge.setBackground(Ui.rounded(badgeColor, Ui.dp(context, 7),
-                current ? Ui.CYAN : included ? Ui.GREEN : Ui.DIVIDER, Ui.dp(context, 1)));
-        FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
-                Gravity.TOP | Gravity.START);
-        badgeParams.setMargins(Ui.dp(context, 7), Ui.dp(context, 7), 0, 0);
-        imageFrame.addView(badge, badgeParams);
+        if (selected || !included) {
+            String badgeLabel = active ? "NOW SHOWING" : selected ? "SELECTED" : "ON DEVICE";
+            int badgeColor = active ? Ui.CYAN : selected ? Ui.GREEN : Ui.SURFACE_HIGH;
+            TextView badge = Ui.title(context, badgeLabel, 9);
+            badge.setTextColor(selected ? Ui.NAV : Ui.MUTED);
+            badge.setGravity(Gravity.CENTER);
+            badge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
+            badge.setBackground(Ui.rounded(badgeColor, Ui.dp(context, 7),
+                    active ? Ui.CYAN : selected ? Ui.GREEN : Ui.DIVIDER, Ui.dp(context, 1)));
+            FrameLayout.LayoutParams badgeParams = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
+                    Gravity.TOP | Gravity.START);
+            badgeParams.setMargins(Ui.dp(context, 7), Ui.dp(context, 7), 0, 0);
+            imageFrame.addView(badge, badgeParams);
+        }
 
-        TextView roleBadge = Ui.title(context,
-                (profile.role == DayNightRole.BOTH ? "BOTH" : profile.role.name()) + "  ↻", 9);
-        roleBadge.setTextColor(Ui.NAV);
-        roleBadge.setGravity(Gravity.CENTER);
-        roleBadge.setPadding(Ui.dp(context, 8), 0, Ui.dp(context, 8), 0);
-        roleBadge.setBackground(Ui.rounded(profile.role == DayNightRole.NIGHT
-                        ? Ui.CORAL : Ui.CYAN, Ui.dp(context, 7)));
-        FrameLayout roleTarget = new FrameLayout(context);
-        roleTarget.setClickable(true);
-        roleTarget.setFocusable(true);
-        roleTarget.setContentDescription("Change " + WallpaperStore.displayName(file)
-                + " from " + profile.role.label + " to " + profile.role.next().label);
-        roleTarget.setOnClickListener(view -> listener.onCycleRole(file, profile.role));
-        FrameLayout.LayoutParams roleBadgeParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(context, 25),
-                Gravity.CENTER_VERTICAL | Gravity.END);
-        roleTarget.addView(roleBadge, roleBadgeParams);
-        FrameLayout.LayoutParams roleTargetParams = new FrameLayout.LayoutParams(
-                Ui.dp(context, 96), Ui.dp(context, 48), Gravity.TOP | Gravity.END);
-        roleTargetParams.setMargins(0, 0, Ui.dp(context, 7), 0);
-        imageFrame.addView(roleTarget, roleTargetParams);
+        if (dayNightEnabled) {
+            DayNightRole role = dayNight.effectiveRole(file);
+            boolean automatic = dayNight.assignmentMode() == DayNightAssignmentMode.AUTO;
+            WallpaperCardControls.addRoleBadge(context, imageFrame,
+                    WallpaperStore.displayName(file), role, automatic,
+                    view -> listener.onCycleRole(file, role));
+        }
 
         TextView title = Ui.title(context, WallpaperStore.displayName(file), 12);
         title.setSingleLine(true);
@@ -205,48 +211,25 @@ final class SlideshowGridAdapter extends BaseAdapter {
         imageFrame.addView(title, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 28), Gravity.BOTTOM));
 
-        LinearLayout actions = new LinearLayout(context);
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER_VERTICAL);
-        actions.setPadding(0, Ui.dp(context, 4), 0, 0);
-
-        Button set = compactButton(current ? "Showing" : "Set", current);
-        set.setSingleLine(true);
-        set.setEnabled(!current);
-        set.setOnClickListener(view -> listener.onSet(file));
-        actions.addView(set, weightedButtonParams(false));
-
-        Button membership = compactButton(included ? "Remove" : "Add", !included);
-        membership.setTextColor(included ? Ui.GREEN : Ui.CYAN);
-        membership.setOnClickListener(view -> listener.onSetIncluded(file, !included));
-        actions.addView(membership, weightedButtonParams(true));
-
-        Button options = compactButton("Options", false);
-        options.setOnClickListener(view -> listener.onOptions(file));
-        actions.addView(options, weightedButtonParams(true));
-
-        card.addView(actions, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 46)));
+        WallpaperCardControls.Action set = active
+                ? WallpaperCardControls.Action.selected("Showing",
+                WallpaperStore.displayName(file) + " is currently showing")
+                : selected
+                ? WallpaperCardControls.Action.selected("Selected",
+                WallpaperStore.displayName(file) + " is selected; activate Deckscape to show it")
+                : WallpaperCardControls.Action.standard("Set",
+                "Set " + WallpaperStore.displayName(file), true,
+                view -> listener.onSet(file));
+        WallpaperCardControls.addActionRow(context, card, set,
+                WallpaperCardControls.Action.destructive(
+                        "Delete " + WallpaperStore.displayName(file) + " from this device",
+                        view -> listener.onDelete(file)),
+                WallpaperCardControls.Action.standard("Options",
+                        "Options for " + WallpaperStore.displayName(file), true,
+                        view -> listener.onOptions(file)));
 
         card.setLayoutParams(new android.widget.AbsListView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 170)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(context, 180)));
         return card;
-    }
-
-    private Button compactButton(String label, boolean accent) {
-        Button button = Ui.actionButton(context, label, accent);
-        button.setSingleLine(true);
-        button.setTextSize(10);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(Ui.dp(context, 4), 0, Ui.dp(context, 4), 0);
-        return button;
-    }
-
-    private LinearLayout.LayoutParams weightedButtonParams(boolean withMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
-        if (withMargin) params.leftMargin = Ui.dp(context, 4);
-        return params;
     }
 }
