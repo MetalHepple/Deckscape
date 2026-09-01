@@ -50,5 +50,5 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     // Android's org.json classes are stubs in local JVM tests; use the reference
     // implementation only on the test classpath to exercise release parsing.
-    testImplementation("org.json:json:20260522")
+    testImplementation("org.json:json:20260814")
 }
