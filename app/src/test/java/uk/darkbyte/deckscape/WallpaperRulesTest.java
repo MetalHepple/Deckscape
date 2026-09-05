@@ -38,4 +38,13 @@ public final class WallpaperRulesTest {
     public void sanitizesStoredFileNames() {
         assertEquals("06._Animated.gif", WallpaperRules.safeFileName("06. Animated.gif"));
     }
+
+    @Test
+    public void resolvesDocumentProviderNamesWithoutTrustingTheirExtension() {
+        assertEquals("holiday_photo.PNG",
+                WallpaperRules.importFileName("holiday photo.PNG", "application/octet-stream"));
+        assertEquals("camera.jpg", WallpaperRules.importFileName("camera.raw", "image/jpeg"));
+        assertEquals("wallpaper.webp", WallpaperRules.importFileName(null, "image/webp"));
+        assertEquals(null, WallpaperRules.importFileName("notes.txt", "text/plain"));
+    }
 }

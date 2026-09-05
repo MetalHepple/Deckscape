@@ -21,7 +21,8 @@ artwork. Repository folders become visual categories, previews are generated
 and cached on the device, and a selected static image or animated GIF is shown
 through Android's standard live-wallpaper service. Each download can be fitted,
 filled, stretched, or cropped for the display, and optional Day & Night pools
-can change the scene automatically. Passive clock, weather, and optional
+can change the scene automatically. Local and USB images can be imported through
+Android's file picker. Passive clock, weather, forecast, and optional
 vehicle-data cards can be drawn over the wallpaper when enabled.
 
 The interface is designed for touch-operated 16:9 Android head units. The core
@@ -34,7 +35,7 @@ Android 9+ devices that support live wallpapers and APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.8.0.apk"><strong>Download Deckscape 1.8.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.9.0.apk"><strong>Download Deckscape 1.9.0 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -49,6 +50,17 @@ See [CHANGELOG.md](CHANGELOG.md) for changes since the first public release.
 
 Android owns the final live-wallpaper confirmation step. Existing installations
 can be updated in place with later Deckscape releases from this repository.
+
+On verified BYD AUTO / DiLink3.0 systems, Deckscape applies a narrow persistence
+fix after Android confirms it as the live wallpaper. Android may show one local
+USB-debugging authorization the first time; select **Always allow** and approve
+it. Deckscape then uses that same-device connection only to force-stop BYD's
+stock wallpaper package. After the active wallpaper becomes visible, a short
+bounded guard stops BYD whenever its delayed quickboot provider restarts during
+that window. On the verified Android 10 firmware, Deckscape also skips BYD's
+optional visibility report, which otherwise wakes the stock wallpaper app each
+time the wallpaper is shown or hidden. Other Android devices and wallpaper
+previews never start the ADB client.
 
 ### App updates
 
@@ -68,7 +80,8 @@ their own installation policy. If a device blocks that installer too, use the
 **Release page** action and install the APK through its browser or file manager.
 Some head units revert to their stock wallpaper while an app update is
 installed; if that happens, open Deckscape and activate its live wallpaper
-again.
+again. On the verified BYD target, Deckscape reapplies its persistence fix after
+that confirmation; the existing local authorization normally remains valid.
 
 ## Screenshots
 
@@ -108,6 +121,8 @@ Screenshots use public catalog previews in an isolated emulator at the target
 - Seven curated catalogs, with support for additional public GitHub repositories.
 - Image-backed folder categories plus an optional recursive **All wallpapers** view.
 - JPEG, PNG, WebP, and animated GIF wallpapers.
+- Local and USB image import through Android's document picker, with no broad
+  storage permission and the same validation used for downloads.
 - Explicit **Get** and **Set** actions: Get stores the original without changing
   the wallpaper or slideshow; Set includes an on-device image and shows it.
 - Download progress is shown inside the selected card's **Get** action.
@@ -126,9 +141,13 @@ Screenshots use public catalog previews in an isolated emulator at the target
   privacy-preserving fallback from a foreground fix that is immediately rounded
   into an approximate on-device saved area.
 - Off/keep-current, 1-minute, 1-hour, 6-hour, and 1-day rotation schedules.
-- Optional non-interactive clock/date, current-weather, and Overdrive-powered
-  vehicle cards with independent drag placement, explicit provider labels, and
-  privacy disclosures.
+- Optional non-interactive clock/date, current-weather, four-hour forecast, and
+  Overdrive-powered vehicle cards with independent drag placement, automatic
+  high-contrast styling, explicit provider labels, and privacy disclosures.
+- Widget source diagnostics that distinguish stale or missing weather and
+  individual unavailable Overdrive readings.
+- A short, memory-bounded crossfade between static wallpapers, switchable in
+  Settings; animated GIF changes stay immediate.
 - GIF playback capped at 10 fps and paused completely while hidden.
 - Verified GitHub update checks with automatic downloads on Wi-Fi or mobile data.
 - Friendly public GitHub contributor profiles with cached avatars, plus
@@ -167,6 +186,12 @@ Auto by brightness assigns and includes it automatically. **Set** includes an
 on-device image and makes it current without removing any other included
 wallpapers. **Delete** removes the downloaded file and its slideshow membership
 after confirmation.
+
+**Import** in Library opens Android's system document picker for one or more
+JPEG, PNG, WebP, or GIF files, including files on an attached USB volume when
+the device exposes one. Deckscape immediately copies each validated image into
+its private library; it does not retain access to the source and requests no
+broad storage permission. Imported images then behave like downloaded images.
 
 Use **Library** in the top bar to see the complete downloaded set, set or delete
 wallpapers, and identify the current image. Its **All**, **Day**, and **Night**
@@ -219,13 +244,16 @@ mode to avoid location entirely or set a fixed schedule.
 ## Wallpaper widgets
 
 The top-bar **Widgets** control opens one workspace for both choosing and
-positioning passive clock/date, weather, and vehicle cards. A large 16:9 canvas
+positioning passive clock/date, weather, short-forecast, and vehicle cards. A large 16:9 canvas
 uses the captured Home screen and live/cached values; enabled cards can be
 dragged directly there. A scrollable catalogue beside it shows a full live
 example and ON/OFF state for every available card, so adding more widget types
 does not shrink the canvas. Tap a catalogue card to toggle it. Cards snap into
 horizontal or vertical alignment with other enabled cards; **Snap: on/off**
-controls that help. Deckscape does not simulate vehicle controls or use a
+controls that help. **Style: auto** chooses a light or dark card palette from a
+small on-device brightness sample; it can be fixed to the original dark style.
+The data-status panel reports when weather, forecast, or an individual vehicle
+reading is waiting or unavailable. Deckscape does not simulate vehicle controls or use a
 dashboard template; without a capture, the canvas uses the current wallpaper.
 The downloaded original is never modified, and the wallpaper cards have no
 touch controls. Android's wallpaper setup preview hides the cards so the user
@@ -249,7 +277,8 @@ boundary, including after device time, date, or time-zone changes. Weather is
 off by default and has a separate consent screen because it sends the shared
 0.1-degree saved area to
 [Open-Meteo](https://open-meteo.com/) over HTTPS. It refreshes at most hourly
-while the wallpaper is visible, keeps a small private offline cache, and stops
+while the wallpaper is visible, keeps a small private current-and-forecast
+offline cache, and stops
 network work when hidden. **Weather & location options** can manually update
 the area or turn the once-daily foreground check on or off. The card retains a
 short **Open-Meteo** attribution.
@@ -349,8 +378,16 @@ coordinates, restricted to HTTPS GitHub endpoints, streamed through byte caps,
 and decoded before an atomic move into app-private storage.
 
 Android owns wallpaper activation. Deckscape opens the ordinary live-wallpaper
-confirmation screen and never modifies a manufacturer theme database. Configure
-the app only while parked when it is used on a vehicle display.
+confirmation screen and never modifies a manufacturer theme database. On the
+exact BYD AUTO / DiLink3.0 target only, it makes an authenticated loopback ADB
+connection after activation and force-stops `com.byd.wallpaperhome`. The active
+wallpaper keeps one local connection for a short, bounded wake window and stops
+only that package when its process appears. The key is kept in private,
+non-backed-up app storage and every command target is fixed in code; no general
+ADB console is exposed. On verified BYD Android 10 hardware, the wallpaper
+service suppresses only the vendor's optional provider visibility notification;
+ordinary rendering callbacks and content access are preserved.
+Configure the app only while parked when it is used on a vehicle display.
 
 Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries,
 caching, and rendering details, and [SECURITY.md](SECURITY.md) for vulnerability

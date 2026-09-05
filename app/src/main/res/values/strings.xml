@@ -20,7 +20,7 @@
     <string name="weather_disclosure_title">Enable weather?</string>
     <string name="weather_disclosure_message">Deckscape needs an approximate location to show local weather. It stores the location rounded to 0.1 degrees and can check it once a day when you open the app. Background location is never requested.
 
-While the wallpaper is visible, the approximate location is sent to api.open-meteo.com over HTTPS at most once per hour. Open-Meteo also receives ordinary network information such as your IP address and may retain server logs for up to 90 days. Weather data is provided by Open-Meteo under CC BY 4.0.</string>
+While the wallpaper is visible, the approximate location is sent to api.open-meteo.com over HTTPS at most once per hour for current conditions and a four-hour forecast. Open-Meteo also receives ordinary network information such as your IP address and may retain server logs for up to 90 days. Weather data is provided by Open-Meteo under CC BY 4.0.</string>
     <string name="weather_location_permission_message">Deckscape uses one location fix to set the area for local weather. Location access stops after the fix, and only a location rounded to 0.1 degrees is stored on this device. The approximate location is sent to Open-Meteo only after Weather is enabled. Background location is never requested. Older or non-Google head units may require Android\'s precise permission so GPS can work; Deckscape discards the precise result immediately.</string>
     <string name="capture_dashboard">Capture dashboard</string>
     <string name="widget_snap_on">Snap: on</string>

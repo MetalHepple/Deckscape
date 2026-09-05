@@ -20,6 +20,7 @@ final class DashboardCaptureStore {
     private static final String KEY_STARTED_AT = "capture_started_at";
     private static final String KEY_ORIGINAL_CLOCK = "original_clock_enabled";
     private static final String KEY_ORIGINAL_WEATHER = "original_weather_enabled";
+    private static final String KEY_ORIGINAL_FORECAST = "original_forecast_enabled";
     private static final String KEY_ORIGINAL_VEHICLE_BATTERY =
             "original_vehicle_battery_enabled";
     private static final String KEY_ORIGINAL_VEHICLE_TEMPERATURES =
@@ -41,6 +42,7 @@ final class DashboardCaptureStore {
                 .putLong(KEY_STARTED_AT, nowMillis)
                 .putBoolean(KEY_ORIGINAL_CLOCK, enabled.contains(OverlayWidget.CLOCK))
                 .putBoolean(KEY_ORIGINAL_WEATHER, enabled.contains(OverlayWidget.WEATHER))
+                .putBoolean(KEY_ORIGINAL_FORECAST, enabled.contains(OverlayWidget.FORECAST))
                 .putBoolean(KEY_ORIGINAL_VEHICLE_BATTERY,
                         enabled.contains(OverlayWidget.VEHICLE_BATTERY))
                 .putBoolean(KEY_ORIGINAL_VEHICLE_TEMPERATURES,
@@ -94,6 +96,7 @@ final class DashboardCaptureStore {
         EnumSet<OverlayWidget> enabled = EnumSet.noneOf(OverlayWidget.class);
         restoreMembership(value, enabled, OverlayWidget.CLOCK, KEY_ORIGINAL_CLOCK);
         restoreMembership(value, enabled, OverlayWidget.WEATHER, KEY_ORIGINAL_WEATHER);
+        restoreMembership(value, enabled, OverlayWidget.FORECAST, KEY_ORIGINAL_FORECAST);
         restoreMembership(value, enabled, OverlayWidget.VEHICLE_BATTERY,
                 KEY_ORIGINAL_VEHICLE_BATTERY);
         restoreMembership(value, enabled, OverlayWidget.VEHICLE_TEMPERATURES,

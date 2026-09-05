@@ -2,6 +2,7 @@ package uk.darkbyte.deckscape;
 
 import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -55,6 +56,22 @@ public final class WallpaperEngineService extends WallpaperService {
     static final long DEFAULT_INTERVAL = 3_600_000L;
 
     @Override
+    public ContentResolver getContentResolver() {
+        if (BydWallpaperVisibilityPolicy.supportsWorkaround(
+                BydWallpaperProtectionPolicy.isAvailable(), Build.VERSION.SDK_INT)
+                && BydWallpaperVisibilityPolicy.isVendorNotification(
+                        new Throwable().getStackTrace())) {
+            // This vendor-only helper catches Exception around provider acquisition.
+            // Its optional visibility report wakes the stock wallpaper process and
+            // makes our process depend on it. Exit before either provider is acquired;
+            // normal rendering, visibility callbacks and resolver calls still proceed.
+            throw new UnsupportedOperationException(
+                    "Deckscape does not use BYD wallpaper visibility reporting");
+        }
+        return super.getContentResolver();
+    }
+
+    @Override
     public Engine onCreateEngine() {
         return new GalleryEngine();
     }
@@ -68,6 +85,8 @@ public final class WallpaperEngineService extends WallpaperService {
         private final Runnable drawRunnable = this::drawFrame;
         private final SharedPreferences preferences = getSharedPreferences(PREFS, MODE_PRIVATE);
         private final DayNightSettings dayNight = new DayNightSettings(WallpaperEngineService.this);
+        private final DisplaySettings displaySettings =
+                new DisplaySettings(WallpaperEngineService.this);
         private final SavedAreaSettings savedArea =
                 new SavedAreaSettings(WallpaperEngineService.this);
         private final WallpaperProfileStore profiles =
@@ -78,6 +97,8 @@ public final class WallpaperEngineService extends WallpaperService {
         private final WeatherClient weatherClient = new WeatherClient();
         private final ExecutorService weatherExecutor = Executors.newSingleThreadExecutor();
         private final ExecutorService vehicleExecutor = Executors.newSingleThreadExecutor();
+        private final BydWallpaperWakeGuard bydWallpaperWakeGuard =
+                new BydWallpaperWakeGuard(WallpaperEngineService.this);
         private final VehicleTelemetryProvider vehicleProvider =
                 new OverdriveVehicleTelemetryProvider(WallpaperEngineService.this);
         private final WallpaperOverlayRenderer overlayRenderer =
@@ -117,6 +138,8 @@ public final class WallpaperEngineService extends WallpaperService {
         private int surfaceHeight;
         private File loadedFile;
         private Bitmap bitmap;
+        private Bitmap outgoingFrame;
+        private long transitionStartUptime;
         private Movie movie;
         private long movieStartUptime;
         private String lastRenderStatus = "";
@@ -134,7 +157,6 @@ public final class WallpaperEngineService extends WallpaperService {
                 } else {
                     reloadOverlayState();
                     updateLightSensor();
-                    releaseDecoded();
                     drawSoon();
                 }
             }
@@ -166,7 +188,10 @@ public final class WallpaperEngineService extends WallpaperService {
             visible = isVisible;
             reloadOverlayState();
             updateLightSensor();
-            if (visible) drawSoon();
+            if (visible) {
+                bydWallpaperWakeGuard.onWallpaperVisible(isPreview());
+                drawSoon();
+            }
             else {
                 handler.removeCallbacks(drawRunnable);
                 cancelWeatherRequest();
@@ -200,6 +225,7 @@ public final class WallpaperEngineService extends WallpaperService {
             cancelVehicleRequest();
             weatherExecutor.shutdownNow();
             vehicleExecutor.shutdownNow();
+            bydWallpaperWakeGuard.close();
             unregisterLightSensor();
             releaseDecoded();
             if (receiverRegistered) {
@@ -259,7 +285,6 @@ public final class WallpaperEngineService extends WallpaperService {
                 preferences.edit().putString(PREF_LAST_PHASE, phase.name()).apply();
                 lastSwitch = now;
                 manualOverride = false;
-                releaseDecoded();
             } else if (manualOverride && interval > 0 && lastSwitch > 0
                     && now - lastSwitch >= interval) {
                 manualOverride = false;
@@ -270,7 +295,6 @@ public final class WallpaperEngineService extends WallpaperService {
                 selected = WallpaperStore.current(WallpaperEngineService.this, files);
                 WallpaperStore.selectForEngine(WallpaperEngineService.this, selected);
                 lastSwitch = now;
-                releaseDecoded();
             }
             int index = Math.max(0, files.indexOf(selected));
             if (lastSwitch == 0) {
@@ -280,13 +304,13 @@ public final class WallpaperEngineService extends WallpaperService {
                 index = RotationPolicy.nextIndex(index, files.size());
                 selected = files.get(index);
                 WallpaperStore.selectForEngine(WallpaperEngineService.this, selected);
-                releaseDecoded();
             }
 
             if (!selected.equals(loadedFile)) load(selected);
             drawLoaded(selected.getName());
             handler.removeCallbacks(drawRunnable);
-            if (visible) handler.postDelayed(drawRunnable, movie != null ? 100L
+            if (visible) handler.postDelayed(drawRunnable, transitionRunning()
+                    ? WallpaperTransitionPolicy.FRAME_DELAY_MILLIS : movie != null ? 100L
                     : WallpaperRedrawScheduler.staticDelayMillis(
                     System.currentTimeMillis(), enabledWidgets.contains(OverlayWidget.CLOCK)
                             && !isPreview()));
@@ -303,12 +327,12 @@ public final class WallpaperEngineService extends WallpaperService {
             int current = files.indexOf(selected);
             int next = current < 0 ? 0 : RotationPolicy.nextIndex(current, files.size());
             WallpaperStore.selectForEngine(WallpaperEngineService.this, files.get(next));
-            releaseDecoded();
             drawSoon();
         }
 
         private void load(File file) {
-            releaseDecoded();
+            Bitmap transitionCandidate = captureOutgoingFrame(file);
+            releaseSource();
             loadedFile = file;
             String status;
             if (WallpaperRules.isGif(file.getName())) {
@@ -330,8 +354,46 @@ public final class WallpaperEngineService extends WallpaperService {
                 status = bitmap == null ? "Image decode failed: " + file.getName()
                         : "Image " + bitmap.getWidth() + "×" + bitmap.getHeight();
             }
+            double luminance = bitmap == null ? Double.NaN
+                    : WallpaperLuminanceClassifier.measure(bitmap);
+            overlayRenderer.setAdaptiveStyle(
+                    displaySettings.isAdaptiveWidgetStyleEnabled(), luminance);
+            if (transitionCandidate != null && bitmap != null) {
+                outgoingFrame = transitionCandidate;
+                transitionStartUptime = SystemClock.uptimeMillis();
+            } else if (transitionCandidate != null) {
+                transitionCandidate.recycle();
+            }
             preferences.edit().putString(PREF_DECODE_STATUS, status).apply();
             Log.i(TAG, status + " • " + file.getName());
+        }
+
+        private Bitmap captureOutgoingFrame(File target) {
+            clearTransition();
+            if (!WallpaperTransitionPolicy.shouldAnimate(displaySettings.isCrossfadeEnabled(),
+                    isPreview(), visible, bitmap != null && !bitmap.isRecycled(),
+                    target != null && !WallpaperRules.isGif(target.getName()),
+                    surfaceWidth, surfaceHeight)) return null;
+            Bitmap frame = null;
+            try {
+                frame = Bitmap.createBitmap(surfaceWidth, surfaceHeight, Bitmap.Config.RGB_565);
+                Canvas canvas = new Canvas(frame);
+                canvas.drawColor(Color.BLACK);
+                WallpaperProfile profile = profiles.get(loadedFile);
+                WallpaperTransform.Result transform = WallpaperTransform.calculate(
+                        bitmap.getWidth(), bitmap.getHeight(), surfaceWidth, surfaceHeight,
+                        profile.scaleMode, dayNight.defaultScaleMode(), profile.zoom,
+                        profile.focusX, profile.focusY);
+                canvas.save();
+                canvas.translate(transform.left, transform.top);
+                canvas.scale(transform.scaleX, transform.scaleY);
+                canvas.drawBitmap(bitmap, 0, 0, bitmapPaint);
+                canvas.restore();
+                return frame;
+            } catch (RuntimeException | OutOfMemoryError exception) {
+                if (frame != null && !frame.isRecycled()) frame.recycle();
+                return null;
+            }
         }
 
         private void drawLoaded(String name) {
@@ -375,6 +437,7 @@ public final class WallpaperEngineService extends WallpaperService {
                 } else {
                     drawText(canvas, "Unable to decode " + name);
                 }
+                drawTransitionFrame(canvas);
                 if (!isPreview()) {
                     overlayRenderer.draw(canvas, canvasWidth, canvasHeight, enabledWidgets,
                             overlayPlacements, weatherSnapshot, vehicleSnapshot,
@@ -401,6 +464,25 @@ public final class WallpaperEngineService extends WallpaperService {
             } finally {
                 if (canvas != null) holder.unlockCanvasAndPost(canvas);
             }
+        }
+
+        private void drawTransitionFrame(Canvas canvas) {
+            if (outgoingFrame == null || outgoingFrame.isRecycled()) return;
+            long elapsed = SystemClock.uptimeMillis() - transitionStartUptime;
+            int alpha = WallpaperTransitionPolicy.outgoingAlpha(elapsed);
+            if (alpha <= 0) {
+                clearTransition();
+                return;
+            }
+            bitmapPaint.setAlpha(alpha);
+            canvas.drawBitmap(outgoingFrame, 0, 0, bitmapPaint);
+            bitmapPaint.setAlpha(255);
+        }
+
+        private boolean transitionRunning() {
+            return outgoingFrame != null && !outgoingFrame.isRecycled()
+                    && SystemClock.uptimeMillis() - transitionStartUptime
+                    < WallpaperTransitionPolicy.DURATION_MILLIS;
         }
 
         private void drawText(Canvas canvas, String message) {
@@ -447,13 +529,15 @@ public final class WallpaperEngineService extends WallpaperService {
         }
 
         private void reloadOverlayState() {
+            overlayRenderer.setAdaptiveStyle(displaySettings.isAdaptiveWidgetStyleEnabled(),
+                    WallpaperLuminanceClassifier.measure(bitmap));
             enabledWidgets = overlaySettings.enabledWidgets();
             vehicleProviderAvailable = vehicleProvider.isAvailable();
             enabledWidgets.retainAll(OverlayWidget.availableWhen(vehicleProviderAvailable));
             overlayPlacements = overlaySettings.placements();
             weatherSnapshot = matchingStoredWeather();
             vehicleSnapshot = VehicleTelemetryStore.latest();
-            if (!enabledWidgets.contains(OverlayWidget.WEATHER)) cancelWeatherRequest();
+            if (!usesWeather()) cancelWeatherRequest();
             if (!vehicleProviderAvailable
                     || overlaySettings.requestedVehicleMetrics().isEmpty()) {
                 cancelVehicleRequest();
@@ -468,9 +552,11 @@ public final class WallpaperEngineService extends WallpaperService {
         }
 
         private void maybeRefreshWeather(long nowMillis) {
-            if (!visible || !enabledWidgets.contains(OverlayWidget.WEATHER)
+            if (!visible || !usesWeather()
                     || !savedArea.hasLocation()) return;
-            if (weatherSnapshot != null && weatherSnapshot.matches(
+            boolean needsForecast = enabledWidgets.contains(OverlayWidget.FORECAST)
+                    && (weatherSnapshot == null || weatherSnapshot.forecast.isEmpty());
+            if (!needsForecast && weatherSnapshot != null && weatherSnapshot.matches(
                     savedArea.latitudeTenths(), savedArea.longitudeTenths())
                     && nowMillis >= weatherSnapshot.fetchedAtMillis
                     && nowMillis - weatherSnapshot.fetchedAtMillis < WEATHER_FRESH_MILLIS) {
@@ -488,8 +574,7 @@ public final class WallpaperEngineService extends WallpaperService {
                     if (Thread.currentThread().isInterrupted()) return;
                     weatherStore.save(updated);
                     handler.post(() -> {
-                                if (destroyed || !visible
-                                        || !enabledWidgets.contains(OverlayWidget.WEATHER)
+                        if (destroyed || !visible || !usesWeather()
                                 || !savedArea.hasLocation()) return;
                         if (!updated.matches(savedArea.latitudeTenths(),
                                 savedArea.longitudeTenths())) return;
@@ -508,6 +593,13 @@ public final class WallpaperEngineService extends WallpaperService {
             weatherClient.cancel();
             if (weatherRequest != null) weatherRequest.cancel(true);
             weatherRequest = null;
+        }
+
+        private boolean usesWeather() {
+            for (OverlayWidget widget : enabledWidgets) {
+                if (widget.usesWeather) return true;
+            }
+            return false;
         }
 
         private void maybeRefreshVehicle(long nowMillis) {
@@ -558,10 +650,21 @@ public final class WallpaperEngineService extends WallpaperService {
         }
 
         private void releaseDecoded() {
+            releaseSource();
+            clearTransition();
+        }
+
+        private void releaseSource() {
             if (bitmap != null) bitmap.recycle();
             bitmap = null;
             movie = null;
             loadedFile = null;
+        }
+
+        private void clearTransition() {
+            if (outgoingFrame != null && !outgoingFrame.isRecycled()) outgoingFrame.recycle();
+            outgoingFrame = null;
+            transitionStartUptime = 0;
         }
     }
 }

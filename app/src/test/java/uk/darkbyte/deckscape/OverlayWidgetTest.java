@@ -9,7 +9,8 @@ import java.util.EnumSet;
 public final class OverlayWidgetTest {
     @Test
     public void withoutVehicleProviderOnlyIndependentCardsAreAvailable() {
-        assertEquals(EnumSet.of(OverlayWidget.CLOCK, OverlayWidget.WEATHER),
+        assertEquals(EnumSet.of(OverlayWidget.CLOCK, OverlayWidget.WEATHER,
+                        OverlayWidget.FORECAST),
                 OverlayWidget.availableWhen(false));
     }
 

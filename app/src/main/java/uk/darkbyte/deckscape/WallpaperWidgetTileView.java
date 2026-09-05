@@ -53,6 +53,11 @@ final class WallpaperWidgetTileView extends View {
         invalidate();
     }
 
+    void setAdaptiveStyle(boolean enabled, double luminance) {
+        renderer.setAdaptiveStyle(enabled, luminance);
+        invalidate();
+    }
+
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);

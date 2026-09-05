@@ -3,7 +3,7 @@
 Deckscape does not include analytics, advertising, user accounts, telemetry,
 background location, or third-party tracking SDKs.
 
-The app connects directly over HTTPS to:
+The app's internet-facing connections go directly over HTTPS to:
 
 - `api.github.com` to read public repository metadata, directory listings,
   Deckscape contributors, and repository-level licence summaries;
@@ -14,8 +14,9 @@ The app connects directly over HTTPS to:
 - `github.com` and GitHub's release-asset hosts to check for and download
   Deckscape updates;
 - `wsrv.nl` to request reduced 480×270 previews while **Data saver** is on;
-- `api.open-meteo.com` to request current conditions only after the user enables
-  the optional wallpaper weather card and accepts its separate disclosure.
+- `api.open-meteo.com` to request current conditions and a four-hour forecast
+  only after the user enables an optional weather card and accepts its separate
+  disclosure.
 
 Repository choices, catalog responses, generated previews, display profiles,
 day/night assignments, settings, the latest cached weather result, and
@@ -31,6 +32,11 @@ If **Auto by brightness** is selected for Day & Night assignment, Deckscape
 decodes a small sample of each downloaded wallpaper locally and stores only its
 calculated brightness and Day/Night role in the existing private display
 profile. The image sample and result are never sent to a network service.
+
+Images selected through Android's document picker, including an exposed USB
+volume, are copied into the same private wallpaper library only after local
+validation. Deckscape does not request broad storage permission, retain a
+document access grant, upload the image, or modify the selected source file.
 
 GitHub, Open-Meteo, and, while Data saver is enabled, wsrv.nl receive ordinary
 network metadata such as the requesting IP address and user agent. The raw
@@ -69,7 +75,7 @@ Deckscape never requests background location. Declining permission or using
 
 ## Wallpaper weather
 
-The passive clock/date and weather cards are optional and off by default. The
+The passive clock/date, current-weather, and forecast cards are optional and off by default. The
 clock and date use the device clock and do not make a network request. Before
 weather is enabled, Deckscape shows a separate disclosure explaining that the
 stored 0.1-degree coordinate will be sent to `api.open-meteo.com` over HTTPS.
@@ -77,8 +83,9 @@ The precise location fix is never sent. If no rounded coordinate has been
 saved, Weather requests the same bounded foreground fix described above. Its
 options can update the shared area manually or disable daily foreground checks.
 
-While the live wallpaper is visible, Deckscape requests only current air
-temperature and a weather-condition code, no more than once per hour. It makes
+While the live wallpaper is visible, Deckscape requests current air
+temperature and weather-condition code plus at most four hourly temperature,
+condition, and precipitation-probability points, no more than once per hour. It makes
 no scheduled background weather requests while the wallpaper is hidden. The
 latest valid result is cached privately for an offline fallback and is no
 longer displayed after six hours. Turning weather off stops further requests.
@@ -116,6 +123,30 @@ all vehicle cards are off. Overdrive remains responsible for how it obtains and
 handles its own data; its project information is included in Deckscape's
 in-app third-party notices.
 
+## BYD wallpaper persistence repair
+
+On hardware reporting the exact BYD AUTO / DiLink3.0 identity, Deckscape targets
+BYD's stock `com.byd.wallpaperhome` package. Only after Deckscape is the
+active live wallpaper, it connects to the head unit's own ADB service through
+the IPv4 loopback address and runs one fixed command to force-stop that package.
+It then reads the package's stopped-state line to verify the result. For 45
+seconds after the active wallpaper becomes visible, a bounded guard checks
+only that package's process and stops it when present. This handles the stock
+wallpaper provider restarting during wake-up. The guard ends with its wallpaper
+engine and does not leave a background service or shell process running.
+
+On the verified Android 10 firmware, Deckscape also skips the vendor's optional
+wallpaper visibility report, which otherwise reconnects to the stock wallpaper
+provider. Ordinary rendering callbacks and other content access are unchanged.
+
+Android owns the one-time ADB authorization prompt. Deckscape generates an ADB
+key pair inside its private, non-backed-up files, never displays or logs the key,
+and reuses it so **Always allow** remains effective. The private key, command
+result, and verification text are never transmitted. Deckscape exposes no ADB
+console and cannot accept a different command or target. The repair is skipped
+when the exact hardware identity is absent and fails closed when the fixed stock
+package target cannot be verified.
+
 ## Private dashboard reference
 
 The widget layout editor can optionally use a screenshot of the device's Home
@@ -142,4 +173,4 @@ private cache until the user chooses to install it. Failed, invalid, and
 obsolete update files are deleted. No update analytics or device identifier is
 sent by Deckscape.
 
-Last updated: 2026-08-15.
+Last updated: 2026-08-27.

@@ -32,7 +32,7 @@ GitHub Contents / Git Trees API
                    |               |
              image transform   passive overlays
                                    |
-                  clock / cached weather / vehicle cards
+          clock / cached weather + forecast / vehicle cards
 ```
 
 Directory listings reuse the cached recursive Git tree to select one safe,
@@ -67,11 +67,17 @@ Both previews and installs enforce streamed byte limits. Installed files also
 undergo format/dimension decoding before their partial file is atomically
 renamed into the private library.
 
+Local and USB imports enter through Android's Storage Access Framework, are
+copied immediately from their one-shot content URI through the same per-format
+byte and decoder limits, and are atomically renamed with a content-derived
+private filename. No filesystem path or persistent document grant is retained.
+
 The optional weather overlay uses one fixed HTTPS endpoint at
 `api.open-meteo.com/v1/forecast`. Only the separately disclosed, stored
 0.1-degree coordinate is accepted as input. Redirects are disabled, response
 type and status are checked, JSON is capped at 64 KB, and temperature,
-condition code, coordinate, and timestamp ranges are validated before caching.
+condition code, coordinate, timestamp, and up to four hourly forecast points
+are validated before caching.
 The renderer never performs network or JSON work.
 
 The vehicle-data boundary is a provider interface rather than a BYD dependency
@@ -115,7 +121,7 @@ never depends on this metadata.
   ceiling pruned to 3 MB, with an initial-letter fallback.
 - Source-licence metadata: app cache directory, seven-day freshness and stale
   offline fallback.
-- Weather: one private current-condition snapshot tied to the rounded
+- Weather: one private current-condition and four-point forecast snapshot tied to the rounded
   coordinate; fetched no more than hourly while visible and displayed for at
   most six hours when offline.
 
@@ -123,7 +129,10 @@ never depends on this metadata.
 
 The engine resolves the selected wallpaper by stable stored filename rather
 than array index. Rotation updates that filename and timestamp. Static images
-are sampled down above 4,096 pixels per axis for runtime memory safety. GIFs
+are sampled down above 4,096 pixels per axis for runtime memory safety. A
+static-to-static change can retain one display-sized RGB-565 snapshot for a
+900 ms eased crossfade; policy caps the surface size and skips GIF, preview,
+hidden-engine, and disabled transitions. GIFs
 use Android's platform `Movie` decoder at a 100 ms redraw cadence and stop
 scheduling frames immediately when the wallpaper becomes hidden.
 
@@ -134,7 +143,7 @@ the touch crop preview and live renderer. It calculates Fill, Fit, Stretch, and
 Custom matrices from the decoded source and the actual locked canvas size, so
 manufacturer-reported wallpaper hints cannot introduce unexpected bars.
 
-`WallpaperOverlayRenderer` composes passive clock/date, weather, and vehicle cards only
+`WallpaperOverlayRenderer` composes passive clock/date, weather, forecast, and vehicle cards only
 after the wallpaper transform. Preview wallpaper engines intentionally skip
 overlay composition and weather work, so Android's wallpaper setup surface is
 unobstructed. Each card has an independently persisted,
@@ -151,7 +160,10 @@ is transformed back into its 16:9 coordinates before normalized positions are
 saved. `OverlaySnapper` independently aligns nearby horizontal and vertical card
 centres within a bounded threshold; the editor can disable it without changing
 the saved positions. The normalized result scales to other surface sizes.
-Overlay preferences are cached by each engine, weather snapshots are read from
+The renderer selects a light or dark `WidgetTheme` from a small local wallpaper
+brightness sample unless the user fixes the dark palette. The Widgets workspace
+uses `WidgetDiagnostics` to describe cache age and missing source fields; those
+messages are never rendered onto the wallpaper. Overlay preferences are cached by each engine, weather snapshots are read from
 a separate private store, and vehicle snapshots never leave process memory.
 The visible engine owns one cancelable weather request and one cancelable local
 vehicle request; hiding or destroying the engine disconnects them and stops
@@ -238,8 +250,48 @@ solar scheduling is in use. The user can disable it in Weather options. Manual
 times are the permission-free fallback. No background location service, remote
 solar API, or wakeup alarm is used.
 
-Android owns activation. Deckscape opens
-`ACTION_CHANGE_LIVE_WALLPAPER`; it never writes a manufacturer theme database.
+Android owns final activation. Deckscape opens
+`ACTION_CHANGE_LIVE_WALLPAPER` and never writes a manufacturer theme database.
+`BydWallpaperProtectionPolicy` is eligible only when `Build.MODEL` is `BYD AUTO`
+and the device or product is `DiLink3.0`. Once `WallpaperManager` confirms Deckscape is active,
+`BydWallpaperProtection` uses dadb over `127.0.0.1:5555` to run the fixed
+`am force-stop --user 0 com.byd.wallpaperhome` command and verifies the package's
+`stopped=true` state. No caller-supplied shell text is accepted.
+
+BYD quickboot force-stops and repeatedly restarts its own wallpaper providers
+before the stock service makes a takeover attempt about one second later. When
+the active, non-preview Deckscape wallpaper becomes visible,
+`BydWallpaperWakeGuard` therefore holds one local ADB connection for 45 seconds.
+It polls for the fixed BYD package process every 250 ms and force-stops it only
+when present. The guard keeps running through transient wallpaper visibility
+changes, coalesces starts while in flight, and is interrupted when the wallpaper
+engine is destroyed. A new visibility event after completion can start another
+window immediately. Worker completion uses the guard's lifecycle lock and does
+not post callbacks back to a destroyed engine.
+It leaves no service, alarm, or shell process behind.
+
+The verified BYD Android 10 framework also adds
+`WallpaperService.Engine.notifyWallpaperVisibility`, which acquires and calls
+`com.byd.wallpaper.link` after both visible and hidden callbacks. This starts
+BYD's stock process even outside quickboot and can make Deckscape depend on the
+provider, so force-stopping BYD can also kill Deckscape. The service's
+`getContentResolver` override identifies only that exact direct caller on the
+eligible Android 10 hardware and throws before provider acquisition. The
+verified vendor helper catches `Exception`, logs its skipped optional report,
+and returns normally. All other resolver calls delegate unchanged. There is no
+reflection, system modification, or replacement of the normal visibility
+callback. The R8 rule preserves the resolver stack boundary. Changes to the
+vendor method or Android version require renewed compatibility verification.
+
+The generated ADB key pair lives under `getNoBackupFilesDir()` and is reused
+across launches and in-place updates so Android's **Always allow** choice is
+persistent. Key material and shell output are neither logged nor transmitted.
+Connection and socket waits are bounded, work runs off the UI thread, success is
+silent, and a failed post-activation repair offers an explicit retry. Wake-guard
+failures are silent and a later real visibility change can retry. Non-BYD
+devices and wallpaper previews never start the ADB client; a
+BYD build without the stock package cannot match the fixed process name or
+command target.
 
 ## Settings and metadata
 

@@ -20,6 +20,13 @@ public final class WallpaperStoreTest {
     }
 
     @Test
+    public void displayNameRemovesFullLocalContentDigest() {
+        File file = new File("local-0123456789abcdef0123456789abcdef"
+                + "0123456789abcdef0123456789abcdef-USB_Sunset.png");
+        assertEquals("USB Sunset", WallpaperStore.displayName(file));
+    }
+
+    @Test
     public void displayNameRemovesCatalogPathAndFinalExtension() {
         assertEquals("Blue.Hour.v2", WallpaperStore.displayName("landscapes/Blue.Hour.v2.webp"));
     }

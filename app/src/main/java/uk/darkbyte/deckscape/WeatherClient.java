@@ -1,6 +1,7 @@
 package uk.darkbyte.deckscape;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -10,6 +11,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Strict, bounded client for the single Open-Meteo endpoint used by wallpaper weather. */
@@ -67,7 +70,9 @@ final class WeatherClient {
         }
         String value = String.format(Locale.ROOT,
                 "https://%s/v1/forecast?latitude=%.1f&longitude=%.1f"
-                        + "&current=temperature_2m,weather_code&forecast_days=1",
+                        + "&current=temperature_2m,weather_code"
+                        + "&hourly=temperature_2m,weather_code,precipitation_probability"
+                        + "&forecast_hours=4&timeformat=unixtime",
                 HOST, latitudeTenths / 10.0, longitudeTenths / 10.0);
         URL url = new URL(value);
         if (!"https".equals(url.getProtocol()) || !HOST.equals(url.getHost())
@@ -91,13 +96,47 @@ final class WeatherClient {
             if (!Double.isFinite(codeValue) || codeValue != Math.rint(codeValue)) {
                 throw new IOException("Weather response has an invalid condition code");
             }
+            List<WeatherSnapshot.ForecastPoint> forecast = parseForecast(root);
             WeatherSnapshot snapshot = new WeatherSnapshot(latitudeTenths, longitudeTenths,
-                    temperature, (int) codeValue, fetchedAtMillis);
+                    temperature, (int) codeValue, fetchedAtMillis, forecast);
             if (!snapshot.isValid()) throw new IOException("Weather response is out of range");
             return snapshot;
         } catch (JSONException exception) {
             throw new IOException("Weather response is not valid JSON", exception);
         }
+    }
+
+    private static List<WeatherSnapshot.ForecastPoint> parseForecast(JSONObject root)
+            throws IOException {
+        JSONObject hourly = root.optJSONObject("hourly");
+        if (hourly == null) return new ArrayList<>();
+        JSONArray times = hourly.optJSONArray("time");
+        JSONArray temperatures = hourly.optJSONArray("temperature_2m");
+        JSONArray codes = hourly.optJSONArray("weather_code");
+        JSONArray rain = hourly.optJSONArray("precipitation_probability");
+        if (times == null || temperatures == null || codes == null || rain == null
+                || times.length() != temperatures.length()
+                || times.length() != codes.length() || times.length() != rain.length()
+                || times.length() == 0) {
+            throw new IOException("Weather response has invalid forecast data");
+        }
+        List<WeatherSnapshot.ForecastPoint> result = new ArrayList<>();
+        int count = Math.min(times.length(), WeatherSnapshot.MAX_FORECAST_POINTS);
+        for (int index = 0; index < count; index++) {
+            double epochSeconds = times.optDouble(index, Double.NaN);
+            double temperature = temperatures.optDouble(index, Double.NaN);
+            double codeValue = codes.optDouble(index, Double.NaN);
+            double rainValue = rain.optDouble(index, Double.NaN);
+            if (!Double.isFinite(epochSeconds) || epochSeconds != Math.rint(epochSeconds)
+                    || epochSeconds <= 0 || epochSeconds > Long.MAX_VALUE / 1000L
+                    || !Double.isFinite(codeValue) || codeValue != Math.rint(codeValue)
+                    || !Double.isFinite(rainValue) || rainValue != Math.rint(rainValue)) {
+                throw new IOException("Weather response has invalid forecast data");
+            }
+            result.add(new WeatherSnapshot.ForecastPoint((long) epochSeconds * 1000L,
+                    temperature, (int) codeValue, (int) rainValue));
+        }
+        return result;
     }
 
     private static String readBounded(InputStream input) throws IOException {
