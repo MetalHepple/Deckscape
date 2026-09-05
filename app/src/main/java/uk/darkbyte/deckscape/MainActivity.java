@@ -6,6 +6,7 @@ import android.app.AlertDialog;
 import android.app.WallpaperInfo;
 import android.app.WallpaperManager;
 import android.content.ComponentName;
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -71,6 +72,8 @@ public final class MainActivity extends Activity {
     private static final int REQUEST_FOREGROUND_LOCATION = 41;
     private static final int REQUEST_DASHBOARD_CAPTURE = 42;
     private static final int REQUEST_CAPTURE_NOTIFICATIONS = 43;
+    private static final int REQUEST_WALLPAPER_IMPORT = 44;
+    private static final int MAX_IMPORT_SELECTION = 32;
 
     private enum LocationRequestPurpose {
         NONE,
@@ -81,6 +84,7 @@ public final class MainActivity extends Activity {
     }
     private static final String UI_PREFS = "ui_state";
     private static final String KEY_LAST_SOURCE = "last_source";
+    private static final String KEY_BYD_PROTECTION_PENDING = "byd_protection_pending";
     private static final String[] INTERVAL_LABELS = {
             "Off – keep current", "Every minute", "Every hour", "Every 6 hours", "Every day"
     };
@@ -99,6 +103,7 @@ public final class MainActivity extends Activity {
     private GitHubMetadataClient metadataClient;
     private RepositoryMetadata aboutMetadata;
     private DayNightSettings dayNightSettings;
+    private DisplaySettings displaySettings;
     private SavedAreaSettings savedAreaSettings;
     private OverlaySettings overlaySettings;
     private CoarseLocationClient locationClient;
@@ -109,6 +114,9 @@ public final class MainActivity extends Activity {
     private String currentPath = "";
     private boolean allMode;
     private boolean activationGuideShown;
+    private boolean bydProtectionAttempted;
+    private boolean bydProtectionInProgress;
+    private AlertDialog bydProtectionFailureDialog;
     private int requestGeneration;
 
     private LinearLayout categoryStrip;
@@ -142,10 +150,14 @@ public final class MainActivity extends Activity {
             new EnumMap<>(OverlayWidget.class);
     private Button settingsCaptureDashboard;
     private Button settingsWidgetSnap;
+    private Button settingsWidgetStyle;
+    private TextView settingsWidgetDiagnostics;
+    private double settingsWidgetLuminance = Double.NaN;
     private TextView weatherAreaStatus;
     private Button weatherAreaButton;
     private Button weatherDailyRefreshButton;
     private LocationRequestPurpose locationRequestPurpose = LocationRequestPurpose.NONE;
+    private OverlayWidget pendingWeatherWidget;
     private boolean returnToWidgetWorkspace;
     private EnumMap<OverlayWidget, OverlayPlacement> dashboardCaptureDraftPlacements;
     private boolean awaitingCaptureNotificationPermission;
@@ -156,6 +168,7 @@ public final class MainActivity extends Activity {
     private boolean automaticAssignmentInProgress;
     private ProgressBar updateDialogProgress;
     private Button updateDialogAction;
+    private Runnable pendingLibraryImportRefresh;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -168,6 +181,7 @@ public final class MainActivity extends Activity {
         previewCache = new PreviewCache(this);
         savedAreaSettings = new SavedAreaSettings(this);
         dayNightSettings = new DayNightSettings(this);
+        displaySettings = new DisplaySettings(this);
         overlaySettings = new OverlaySettings(this);
         boolean recoveredCapture = DashboardCaptureStore.recoverInterrupted(this,
                 System.currentTimeMillis());
@@ -191,6 +205,13 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         updateActiveState();
+        boolean wallpaperActive = isWallpaperActive();
+        boolean protectionPending = isBydProtectionPending();
+        if (wallpaperActive) {
+            maybeApplyBydWallpaperProtection(protectionPending);
+        } else if (protectionPending) {
+            modeButton.postDelayed(this::finishPendingWallpaperActivation, 1_000L);
+        }
         maybeRefreshSavedAreaDaily();
         if ((returnToWidgetWorkspace || DashboardCaptureStore.shouldReturnToWidgets(this))
                 && !DashboardCaptureStore.isPending(this)) {
@@ -201,7 +222,7 @@ public final class MainActivity extends Activity {
             settingsButton.post(this::showWallpaperWidgets);
             return;
         }
-        if (!activationGuideShown && !isWallpaperActive()) {
+        if (!activationGuideShown && !wallpaperActive && !protectionPending) {
             activationGuideShown = true;
             modeButton.post(this::showActivationGuide);
         }
@@ -224,6 +245,10 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_WALLPAPER_IMPORT) {
+            handleWallpaperImportResult(resultCode, data);
+            return;
+        }
         if (requestCode != REQUEST_DASHBOARD_CAPTURE) return;
         if (resultCode != RESULT_OK || data == null) {
             DashboardCaptureStore.restoreWidgets(this);
@@ -291,6 +316,10 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         requestGeneration++;
         io.shutdownNow();
+        if (bydProtectionFailureDialog != null) {
+            bydProtectionFailureDialog.dismiss();
+            bydProtectionFailureDialog = null;
+        }
         previewCache.close();
         locationClient.cancel();
         if (updateManager != null) updateManager.close();
@@ -903,6 +932,7 @@ public final class MainActivity extends Activity {
     /** Explains Android's one-time live-wallpaper confirmation before opening it. */
     private void showActivationGuide() {
         if (isFinishing() || isWallpaperActive()) return;
+        boolean needsBydProtection = BydWallpaperProtectionPolicy.isAvailable();
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(Ui.dp(this, 24), Ui.dp(this, 20),
@@ -913,16 +943,24 @@ public final class MainActivity extends Activity {
                         Ui.dp(this, 42)));
 
         TextView introduction = Ui.text(this,
-                "Android needs one confirmation before Deckscape can become your live wallpaper.",
+                needsBydProtection
+                        ? "Android needs one confirmation. Deckscape then enables wallpaper "
+                                + "protection for this head unit."
+                        : "Android needs one confirmation before Deckscape can become your live wallpaper.",
                 14, Ui.MUTED);
         introduction.setMaxLines(2);
         panel.addView(introduction, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52)));
 
         TextView steps = Ui.text(this,
-                "1   Deckscape opens Android's wallpaper screen\n"
-                        + "2   Some head units may briefly rotate that screen to portrait\n"
-                        + "3   Tap ‘Set wallpaper’ to return here in landscape",
+                needsBydProtection
+                        ? "1   Deckscape opens Android's wallpaper screen\n"
+                                + "2   Tap ‘Set wallpaper’\n"
+                                + "3   If Android asks about USB debugging, select ‘Always allow’ "
+                                + "and tap Allow"
+                        : "1   Deckscape opens Android's wallpaper screen\n"
+                                + "2   Some head units may briefly rotate that screen to portrait\n"
+                                + "3   Tap ‘Set wallpaper’ to return here in landscape",
                 15, Ui.TEXT);
         steps.setGravity(Gravity.CENTER_VERTICAL);
         steps.setLineSpacing(Ui.dp(this, 5), 1f);
@@ -931,10 +969,13 @@ public final class MainActivity extends Activity {
         steps.setBackground(Ui.rounded(Ui.SURFACE, Ui.dp(this, 12),
                 Ui.DIVIDER, Ui.dp(this, 1)));
         panel.addView(steps, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 116)));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Ui.dp(this, needsBydProtection ? 132 : 116)));
 
         TextView reassurance = Ui.text(this,
-                "After activation, previews and wallpaper changes stay inside Deckscape.",
+                needsBydProtection
+                        ? "The authorization stays on this head unit and is used only for this fix."
+                        : "After activation, previews and wallpaper changes stay inside Deckscape.",
                 13, Ui.CYAN);
         reassurance.setGravity(Gravity.CENTER_VERTICAL);
         panel.addView(reassurance, new LinearLayout.LayoutParams(
@@ -1076,6 +1117,11 @@ public final class MainActivity extends Activity {
         updateSlideshowToggle(slideshowToggle);
         actions.addView(slideshowToggle, new LinearLayout.LayoutParams(
                 Ui.dp(this, 184), Ui.dp(this, 46)));
+        Button importButton = Ui.button(this, "Import", false);
+        LinearLayout.LayoutParams importParams = new LinearLayout.LayoutParams(
+                Ui.dp(this, 126), Ui.dp(this, 48));
+        importParams.leftMargin = Ui.dp(this, 10);
+        actions.addView(importButton, importParams);
         View actionSpacer = new View(this);
         actions.addView(actionSpacer, new LinearLayout.LayoutParams(
                 0, Ui.dp(this, 1), 1f));
@@ -1086,6 +1132,10 @@ public final class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 72)));
 
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
+        importButton.setOnClickListener(view -> {
+            pendingLibraryImportRefresh = refreshHolder[0];
+            openWallpaperDocuments();
+        });
         slideshowToggle.setOnClickListener(view -> {
             long nextInterval = RotationPolicy.isSlideshowEnabled(slideshowInterval())
                     ? 0 : lastEnabledSlideshowInterval();
@@ -1098,6 +1148,7 @@ public final class MainActivity extends Activity {
                     : "Slideshow off • the current wallpaper stays fixed.");
         });
         close.setOnClickListener(view -> dialog.dismiss());
+        dialog.setOnDismissListener(ignored -> pendingLibraryImportRefresh = null);
         dialog.show();
         Window window = dialog.getWindow();
         if (window != null) {
@@ -1107,6 +1158,84 @@ public final class MainActivity extends Activity {
             window.setLayout(Math.min(available, Ui.dp(this, 900)),
                     ViewGroup.LayoutParams.WRAP_CONTENT);
         }
+    }
+
+    private void openWallpaperDocuments() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("image/*")
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                .putExtra(Intent.EXTRA_MIME_TYPES,
+                        new String[]{"image/jpeg", "image/png", "image/webp", "image/gif"});
+        try {
+            startActivityForResult(intent, REQUEST_WALLPAPER_IMPORT);
+        } catch (Exception exception) {
+            pendingLibraryImportRefresh = null;
+            Toast.makeText(this, "Android's file picker is unavailable.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void handleWallpaperImportResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null) {
+            pendingLibraryImportRefresh = null;
+            return;
+        }
+        List<Uri> selected = new ArrayList<>();
+        ClipData clipData = data.getClipData();
+        if (clipData != null) {
+            for (int index = 0; index < clipData.getItemCount()
+                    && selected.size() < MAX_IMPORT_SELECTION; index++) {
+                Uri uri = clipData.getItemAt(index).getUri();
+                if (uri != null && !selected.contains(uri)) selected.add(uri);
+            }
+        } else if (data.getData() != null) {
+            selected.add(data.getData());
+        }
+        if (selected.isEmpty()) {
+            pendingLibraryImportRefresh = null;
+            Toast.makeText(this, "No images were selected.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        setStatus("Importing " + selected.size() + " wallpaper"
+                + (selected.size() == 1 ? "" : "s") + "…");
+        Runnable refresh = pendingLibraryImportRefresh;
+        pendingLibraryImportRefresh = null;
+        io.execute(() -> {
+            int imported = 0;
+            String firstError = null;
+            for (Uri uri : selected) {
+                try {
+                    File file = WallpaperStore.importDocument(this, uri);
+                    WallpaperStore.removeFromSlideshow(this, file);
+                    imported++;
+                } catch (Exception exception) {
+                    if (firstError == null) firstError = readableMessage(exception);
+                }
+            }
+            if (imported > 0
+                    && dayNightSettings.assignmentMode() == DayNightAssignmentMode.AUTO) {
+                sortAutomaticAssignmentsNow();
+            }
+            if (imported > 0) {
+                sendBroadcast(new Intent(WallpaperEngineService.ACTION_LIBRARY_CHANGED)
+                        .setPackage(getPackageName()));
+            }
+            int importedCount = imported;
+            String error = firstError;
+            runOnUiThread(() -> {
+                if (refresh != null) refresh.run();
+                gridAdapter.refreshLibraryState(isWallpaperActive());
+                String message = importedCount == 0
+                        ? "No wallpapers were imported. " + (error == null ? "" : error)
+                        : "Imported " + importedCount + " wallpaper"
+                        + (importedCount == 1 ? "" : "s") + " to Library."
+                        + (error == null ? "" : " Some files were skipped: " + error);
+                setStatus(message);
+                if (error != null) Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            });
+        });
     }
 
     private void refreshWallpaperLibrary(SlideshowGridAdapter adapter, TextView explanation,
@@ -1123,7 +1252,7 @@ public final class MainActivity extends Activity {
         int included = adapter.includedCount();
         boolean slideshowEnabled = RotationPolicy.isSlideshowEnabled(slideshowInterval());
         String summary = downloaded == 0
-                ? "Use Get while browsing to save wallpapers on this device."
+                ? "Use Get while browsing, or Import local and USB images."
                 : !slideshowEnabled
                 ? "Slideshow is off. " + adapter.currentDisplayName()
                 + " stays fixed until you Set another wallpaper."
@@ -1372,6 +1501,9 @@ public final class MainActivity extends Activity {
     }
 
     private void activateWallpaper() {
+        boolean protectBydWallpaper = BydWallpaperProtectionPolicy.isAvailable();
+        setBydProtectionPending(protectBydWallpaper);
+        bydProtectionAttempted = false;
         ComponentName component = new ComponentName(this, WallpaperEngineService.class);
         Intent change = new Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER);
         change.putExtra(WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT, component);
@@ -1381,10 +1513,73 @@ public final class MainActivity extends Activity {
             try {
                 startActivity(new Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER));
             } catch (Exception fallback) {
+                setBydProtectionPending(false);
                 Toast.makeText(this, "Android's wallpaper picker is unavailable.",
                         Toast.LENGTH_LONG).show();
             }
         }
+    }
+
+    private void finishPendingWallpaperActivation() {
+        if (isFinishing() || isDestroyed()) return;
+        updateActiveState();
+        if (isWallpaperActive()) {
+            maybeApplyBydWallpaperProtection(true);
+        } else {
+            setBydProtectionPending(false);
+        }
+    }
+
+    private boolean isBydProtectionPending() {
+        return getSharedPreferences(UI_PREFS, MODE_PRIVATE)
+                .getBoolean(KEY_BYD_PROTECTION_PENDING, false);
+    }
+
+    private void setBydProtectionPending(boolean pending) {
+        getSharedPreferences(UI_PREFS, MODE_PRIVATE).edit()
+                .putBoolean(KEY_BYD_PROTECTION_PENDING, pending).apply();
+    }
+
+    /** Repairs BYD takeover only after Deckscape is confirmed as the active wallpaper. */
+    private void maybeApplyBydWallpaperProtection(boolean showFailure) {
+        if (bydProtectionAttempted || bydProtectionInProgress || !isWallpaperActive()
+                || !BydWallpaperProtectionPolicy.isAvailable()) {
+            return;
+        }
+        bydProtectionAttempted = true;
+        bydProtectionInProgress = true;
+        io.execute(() -> {
+            BydWallpaperProtection.Result result = BydWallpaperProtection.apply(this);
+            runOnUiThread(() -> {
+                bydProtectionInProgress = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (result != BydWallpaperProtection.Result.FAILED) {
+                    setBydProtectionPending(false);
+                } else if (showFailure) {
+                    showBydWallpaperProtectionFailure();
+                }
+            });
+        });
+    }
+
+    private void showBydWallpaperProtectionFailure() {
+        if (bydProtectionFailureDialog != null
+                && bydProtectionFailureDialog.isShowing()) return;
+        bydProtectionFailureDialog = new AlertDialog.Builder(this)
+                .setTitle("Wallpaper protection did not finish")
+                .setMessage("Wallpaper protection could not be enabled. "
+                        + "If Android asks about USB debugging, select ‘Always allow’, tap Allow, "
+                        + "then try again.")
+                .setNegativeButton("Not now", (dialog, which) ->
+                        setBydProtectionPending(false))
+                .setPositiveButton("Try again", (dialog, which) -> {
+                    bydProtectionAttempted = false;
+                    maybeApplyBydWallpaperProtection(true);
+                })
+                .create();
+        bydProtectionFailureDialog.setOnDismissListener(dialog ->
+                bydProtectionFailureDialog = null);
+        bydProtectionFailureDialog.show();
     }
 
     private void openSelectedSource() {
@@ -1628,8 +1823,15 @@ public final class MainActivity extends Activity {
         right.addView(interval, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48)));
 
+        Button crossfade = Ui.actionButton(this, displaySettings.isCrossfadeEnabled()
+                ? "Wallpaper crossfade: on" : "Wallpaper crossfade: off", false);
+        LinearLayout.LayoutParams crossfadeParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 48));
+        crossfadeParams.topMargin = Ui.dp(this, 8);
+        right.addView(crossfade, crossfadeParams);
+
         right.addView(settingsHeading("DATA & STORAGE"), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 42)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 34)));
         TextView storage = Ui.text(this, storageSummary(), 13, Ui.MUTED);
         storage.setLineSpacing(Ui.dp(this, 2), 1f);
         right.addView(storage, new LinearLayout.LayoutParams(
@@ -1713,6 +1915,14 @@ public final class MainActivity extends Activity {
             dataSaver.setText(enabled ? "Preview data saver: on" : "Preview data saver: off");
             setStatus("Preview data saver " + (enabled ? "enabled." : "disabled."));
         });
+        crossfade.setOnClickListener(view -> {
+            boolean enabled = !displaySettings.isCrossfadeEnabled();
+            displaySettings.setCrossfadeEnabled(enabled);
+            crossfade.setText(enabled ? "Wallpaper crossfade: on"
+                    : "Wallpaper crossfade: off");
+            broadcastConfigurationChanged();
+            setStatus("Wallpaper crossfade " + (enabled ? "enabled." : "disabled."));
+        });
         clear.setOnClickListener(view -> {
             previewCache.clear();
             catalogClient.clearCache();
@@ -1755,7 +1965,13 @@ public final class MainActivity extends Activity {
         DashboardLayoutEditorView preview = new DashboardLayoutEditorView(this,
                 initialPlacements);
         settingsWidgetPreview = preview;
+        settingsWidgetLuminance = Double.NaN;
+        preview.setAdaptiveWidgetStyle(displaySettings.isAdaptiveWidgetStyleEnabled());
         File selected = WallpaperStore.selectedDownloaded(this);
+        if (selected == null) {
+            List<File> downloaded = WallpaperStore.listDownloaded(this);
+            if (!downloaded.isEmpty()) selected = WallpaperStore.current(this, downloaded);
+        }
         WallpaperProfile profile = new WallpaperProfileStore(this).get(selected);
         preview.setWallpaperProfile(profile, dayNightSettings.defaultScaleMode());
         boolean hasDashboardCapture = DashboardCaptureStore.hasReference(this);
@@ -1777,6 +1993,10 @@ public final class MainActivity extends Activity {
         settingsWidgetSnap = Ui.button(this, getString(R.string.widget_snap_on), false);
         settingsWidgetSnap.setSingleLine(true);
         toolbar.addView(settingsWidgetSnap, toolbarButtonParams(104));
+        settingsWidgetStyle = Ui.button(this, displaySettings.isAdaptiveWidgetStyleEnabled()
+                ? "Style: auto" : "Style: dark", false);
+        settingsWidgetStyle.setSingleLine(true);
+        toolbar.addView(settingsWidgetStyle, toolbarButtonParams(112));
         Button reset = Ui.button(this, "Reset layout", false);
         toolbar.addView(reset, toolbarButtonParams(118));
         Button done = Ui.button(this, "Done", true);
@@ -1794,6 +2014,16 @@ public final class MainActivity extends Activity {
                 Ui.dp(this, 10), Ui.dp(this, 8));
         catalogue.addView(settingsHeading("WIDGETS"), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 26)));
+        settingsWidgetDiagnostics = Ui.text(this, "", 11, Ui.MUTED);
+        settingsWidgetDiagnostics.setLineSpacing(Ui.dp(this, 1), 1f);
+        settingsWidgetDiagnostics.setPadding(Ui.dp(this, 10), Ui.dp(this, 6),
+                Ui.dp(this, 10), Ui.dp(this, 6));
+        settingsWidgetDiagnostics.setBackground(Ui.rounded(Ui.BACKGROUND,
+                Ui.dp(this, 8), Ui.DIVIDER, Ui.dp(this, 1)));
+        LinearLayout.LayoutParams diagnosticsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 76));
+        diagnosticsParams.bottomMargin = Ui.dp(this, 7);
+        catalogue.addView(settingsWidgetDiagnostics, diagnosticsParams);
         ScrollView catalogueScroll = new ScrollView(this);
         catalogueScroll.setFillViewport(true);
         catalogueScroll.setVerticalScrollBarEnabled(true);
@@ -1806,9 +2036,9 @@ public final class MainActivity extends Activity {
             settingsWidgetTiles.put(widget, tile);
             LinearLayout.LayoutParams tileParams = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 112));
-            tileParams.bottomMargin = Ui.dp(this, widget == OverlayWidget.WEATHER ? 4 : 8);
+            tileParams.bottomMargin = Ui.dp(this, widget == OverlayWidget.FORECAST ? 4 : 8);
             tileList.addView(tile, tileParams);
-            if (widget == OverlayWidget.WEATHER) {
+            if (widget == OverlayWidget.FORECAST) {
                 Button options = Ui.actionButton(this, "Weather settings", false);
                 options.setOnClickListener(view -> showWeatherWidgetOptions());
                 LinearLayout.LayoutParams optionsParams = new LinearLayout.LayoutParams(
@@ -1840,6 +2070,16 @@ public final class MainActivity extends Activity {
             settingsWidgetSnap.setText(enabled
                     ? R.string.widget_snap_on : R.string.widget_snap_off);
         });
+        settingsWidgetStyle.setOnClickListener(view -> {
+            boolean enabled = !displaySettings.isAdaptiveWidgetStyleEnabled();
+            displaySettings.setAdaptiveWidgetStyleEnabled(enabled);
+            settingsWidgetStyle.setText(enabled ? "Style: auto" : "Style: dark");
+            preview.setAdaptiveWidgetStyle(enabled);
+            for (WallpaperWidgetTileView tile : settingsWidgetTiles.values()) {
+                tile.setAdaptiveStyle(enabled, settingsWidgetLuminance);
+            }
+            broadcastConfigurationChanged();
+        });
         reset.setOnClickListener(view -> preview.resetPlacements());
         done.setOnClickListener(view -> {
             overlaySettings.setPlacements(preview.placements());
@@ -1853,6 +2093,9 @@ public final class MainActivity extends Activity {
             settingsWidgetTiles.clear();
             settingsCaptureDashboard = null;
             settingsWidgetSnap = null;
+            settingsWidgetStyle = null;
+            settingsWidgetDiagnostics = null;
+            settingsWidgetLuminance = Double.NaN;
         });
         dialog.show();
         styleWideDialog(dialog, 1_220);
@@ -1873,6 +2116,12 @@ public final class MainActivity extends Activity {
                     if (result == null) return;
                     if (dialog.isShowing()) {
                         preview.setDecoded(result);
+                        settingsWidgetLuminance = WallpaperLuminanceClassifier.measure(
+                                result.bitmap);
+                        boolean adaptive = displaySettings.isAdaptiveWidgetStyleEnabled();
+                        for (WallpaperWidgetTileView tile : settingsWidgetTiles.values()) {
+                            tile.setAdaptiveStyle(adaptive, settingsWidgetLuminance);
+                        }
                     } else if (result.bitmap != null && !result.bitmap.isRecycled()) {
                         result.bitmap.recycle();
                     }
@@ -1902,8 +2151,8 @@ public final class MainActivity extends Activity {
     }
 
     private void toggleWidgetFromWorkspace(OverlayWidget widget) {
-        if (widget == OverlayWidget.WEATHER && !overlaySettings.isWeatherEnabled()) {
-            enableWeatherFromSettings();
+        if (widget.usesWeather && !overlaySettings.isEnabled(widget)) {
+            enableWeatherFromSettings(widget);
             return;
         }
         boolean enable = !overlaySettings.isEnabled(widget);
@@ -2170,7 +2419,9 @@ public final class MainActivity extends Activity {
         refreshSettingsStatus();
     }
 
-    private void enableWeatherFromSettings() {
+    private void enableWeatherFromSettings(OverlayWidget widget) {
+        pendingWeatherWidget = widget != null && widget.usesWeather
+                ? widget : OverlayWidget.WEATHER;
         if (!overlaySettings.hasWeatherDisclosure()) {
             showWeatherDisclosure();
             return;
@@ -2194,7 +2445,9 @@ public final class MainActivity extends Activity {
 
     private void finishEnablingWeather() {
         if (savedAreaSettings.hasLocation()) {
-            overlaySettings.setWeatherEnabled(true);
+            overlaySettings.setEnabled(pendingWeatherWidget == null
+                    ? OverlayWidget.WEATHER : pendingWeatherWidget, true);
+            pendingWeatherWidget = null;
             broadcastConfigurationChanged();
             refreshSettingsStatus();
             return;
@@ -2274,7 +2527,9 @@ public final class MainActivity extends Activity {
                     dayNightSettings.setEnabled(true);
                 }
                 if (purpose == LocationRequestPurpose.ENABLE_WEATHER) {
-                    overlaySettings.setWeatherEnabled(true);
+                    overlaySettings.setEnabled(pendingWeatherWidget == null
+                            ? OverlayWidget.WEATHER : pendingWeatherWidget, true);
+                    pendingWeatherWidget = null;
                 }
                 broadcastConfigurationChanged();
                 refreshSettingsStatus();
@@ -2323,7 +2578,7 @@ public final class MainActivity extends Activity {
     private void maybeRefreshSavedAreaDaily() {
         if (locationClient == null || locationClient.isRequesting()
                 || !hasUsableForegroundLocationPermission()) return;
-        boolean areaInUse = (overlaySettings != null && overlaySettings.isWeatherEnabled())
+        boolean areaInUse = (overlaySettings != null && overlaySettings.hasEnabledWeatherWidget())
                 || (dayNightSettings != null && dayNightSettings.isEnabled()
                 && dayNightSettings.mode() == ScheduleMode.AUTO && !hasAmbientLightSensor());
         long now = System.currentTimeMillis();
@@ -2434,9 +2689,18 @@ public final class MainActivity extends Activity {
         if (settingsWidgetPreview != null) {
             settingsWidgetPreview.setWidgetState(enabled, weather, vehicle);
         }
+        boolean adaptive = displaySettings.isAdaptiveWidgetStyleEnabled();
         for (OverlayWidget widget : settingsWidgetTiles.keySet()) {
             WallpaperWidgetTileView tile = settingsWidgetTiles.get(widget);
-            if (tile != null) tile.setState(enabled.contains(widget), weather, vehicle);
+            if (tile != null) {
+                tile.setAdaptiveStyle(adaptive, settingsWidgetLuminance);
+                tile.setState(enabled.contains(widget), weather, vehicle);
+            }
+        }
+        if (settingsWidgetDiagnostics != null) {
+            settingsWidgetDiagnostics.setText(WidgetDiagnostics.describe(enabled,
+                    savedAreaSettings.hasLocation(), weather,
+                    OverdriveBrand.isInstalled(this), vehicle, System.currentTimeMillis()));
         }
         if (settingsCaptureDashboard != null) {
             settingsCaptureDashboard.setText(DashboardCaptureStore.hasReference(this)
@@ -2778,6 +3042,8 @@ public final class MainActivity extends Activity {
         content.append("DECKSCAPE\nCopyright © 2026 Paul Hepple\n\n")
                 .append(readAssetText("LICENSE")).append("\n\n")
                 .append(readAssetText("THIRD_PARTY_NOTICES.md")).append("\n\n")
+                .append("APACHE LICENSE 2.0\n\n")
+                .append(readAssetText("DADB_LICENSE.txt")).append("\n\n")
                 .append("SOURCE LICENCES\n")
                 .append("Repository licences may not cover individual collected wallpaper images.\n\n");
         RepositoryMetadata metadata = aboutMetadata;

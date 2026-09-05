@@ -5,6 +5,43 @@ versioning, and public Android `versionCode` values increase once per release.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-09-05
+
+### Added
+
+- Library can import one or more JPEG, PNG, WebP, or GIF wallpapers from
+  Android's document picker, including exposed USB storage, without broad
+  storage permission. Imports use byte, dimension, and decoder limits before
+  an atomic copy enters the private library.
+- A compact optional forecast card shows the next four hourly temperature,
+  condition, and precipitation-probability points from the existing disclosed
+  Open-Meteo request and shared approximate saved area.
+- Wallpaper cards can automatically select a light or dark high-contrast
+  palette from an on-device brightness sample. The Widgets toolbar can pin the
+  original dark style instead.
+- The Widgets workspace now reports weather/forecast freshness and identifies
+  missing Overdrive fields, including cabin, outside, and battery temperature
+  readings individually.
+- Static wallpaper changes use a 900 ms eased crossfade backed by one bounded
+  RGB-565 surface snapshot. The effect is switchable in Settings and is skipped
+  for GIFs, previews, hidden wallpaper engines, and oversized surfaces.
+
+### Changed
+
+- The hourly weather response cache now includes at most four validated
+  forecast points while retaining the existing six-hour offline display limit.
+
+### Fixed
+
+- Wallpaper persistence on verified BYD AUTO / DiLink3.0 Android 10 head units.
+  Deckscape skips the vendor visibility report that wakes BYD's stock wallpaper
+  app whenever the wallpaper is shown or hidden. A bounded startup guard also
+  stops the stock wallpaper provider when it restarts during wake-up.
+- BYD activation uses a private same-device ADB connection and reuses Android's
+  one-time **Always allow** authorization. Other devices and previews never
+  start the ADB client. Normal wallpaper rendering and content access remain
+  unchanged, and background repair work stops with its owning screen or engine.
+
 ## [1.8.0] - 2026-08-15
 
 ### Added
@@ -331,7 +368,8 @@ versioning, and public Android `versionCode` values increase once per release.
 - Manual and timed rotation schedules.
 - CI, privacy, security, contribution, and architecture documentation.
 
-[Unreleased]: https://github.com/MetalHepple/Deckscape/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/MetalHepple/Deckscape/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/MetalHepple/Deckscape/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/MetalHepple/Deckscape/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/MetalHepple/Deckscape/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/MetalHepple/Deckscape/compare/v1.7.1...v1.7.2

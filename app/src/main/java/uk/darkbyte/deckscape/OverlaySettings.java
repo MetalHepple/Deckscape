@@ -11,12 +11,15 @@ import java.util.Map;
 final class OverlaySettings {
     private static final String KEY_CLOCK_ENABLED = "overlay_clock_enabled";
     private static final String KEY_WEATHER_ENABLED = "overlay_weather_enabled";
+    private static final String KEY_FORECAST_ENABLED = "overlay_forecast_enabled";
     private static final String KEY_WEATHER_DISCLOSED = "overlay_weather_disclosed";
     private static final String KEY_POSITION = "overlay_position";
     private static final String KEY_CLOCK_X = "overlay_clock_x";
     private static final String KEY_CLOCK_Y = "overlay_clock_y";
     private static final String KEY_WEATHER_X = "overlay_weather_x";
     private static final String KEY_WEATHER_Y = "overlay_weather_y";
+    private static final String KEY_FORECAST_X = "overlay_forecast_x";
+    private static final String KEY_FORECAST_Y = "overlay_forecast_y";
     private static final String KEY_VEHICLE_BATTERY_ENABLED =
             "overlay_vehicle_battery_enabled";
     private static final String KEY_VEHICLE_TEMPERATURES_ENABLED =
@@ -52,6 +55,13 @@ final class OverlaySettings {
 
     void setWeatherEnabled(boolean enabled) {
         setEnabled(OverlayWidget.WEATHER, enabled);
+    }
+
+    boolean hasEnabledWeatherWidget() {
+        for (OverlayWidget widget : enabledWidgets()) {
+            if (widget.usesWeather) return true;
+        }
+        return false;
     }
 
     boolean isEnabled(OverlayWidget widget) {
@@ -172,6 +182,8 @@ final class OverlaySettings {
                 return KEY_CLOCK_ENABLED;
             case WEATHER:
                 return KEY_WEATHER_ENABLED;
+            case FORECAST:
+                return KEY_FORECAST_ENABLED;
             case VEHICLE_BATTERY:
                 return KEY_VEHICLE_BATTERY_ENABLED;
             case VEHICLE_TEMPERATURES:
@@ -189,6 +201,8 @@ final class OverlaySettings {
                 return KEY_CLOCK_X;
             case WEATHER:
                 return KEY_WEATHER_X;
+            case FORECAST:
+                return KEY_FORECAST_X;
             case VEHICLE_BATTERY:
                 return KEY_VEHICLE_BATTERY_X;
             case VEHICLE_TEMPERATURES:
@@ -206,6 +220,8 @@ final class OverlaySettings {
                 return KEY_CLOCK_Y;
             case WEATHER:
                 return KEY_WEATHER_Y;
+            case FORECAST:
+                return KEY_FORECAST_Y;
             case VEHICLE_BATTERY:
                 return KEY_VEHICLE_BATTERY_Y;
             case VEHICLE_TEMPERATURES:

@@ -53,4 +53,24 @@ final class WallpaperLuminanceClassifier {
         }
         return count == 0 ? 0.5 : total / count;
     }
+
+    static double measure(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled()) return Double.NaN;
+        int xStep = Math.max(1, bitmap.getWidth() / MAX_SAMPLE_AXIS);
+        int yStep = Math.max(1, bitmap.getHeight() / MAX_SAMPLE_AXIS);
+        double total = 0;
+        int count = 0;
+        for (int y = yStep / 2; y < bitmap.getHeight(); y += yStep) {
+            for (int x = xStep / 2; x < bitmap.getWidth(); x += xStep) {
+                int pixel = bitmap.getPixel(x, y);
+                if ((pixel >>> 24) < 128) continue;
+                int red = (pixel >>> 16) & 0xff;
+                int green = (pixel >>> 8) & 0xff;
+                int blue = pixel & 0xff;
+                total += (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255.0;
+                count++;
+            }
+        }
+        return count == 0 ? 0.5 : total / count;
+    }
 }

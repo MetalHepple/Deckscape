@@ -10,8 +10,8 @@ android {
         applicationId = "uk.darkbyte.deckscape"
         minSdk = 28
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.8.0"
+        versionCode = 14
+        versionName = "1.9.0"
     }
 
     buildFeatures {
@@ -47,6 +47,12 @@ android {
 }
 
 dependencies {
+    // Authenticated, same-device transport for the fixed BYD wallpaper repair.
+    implementation("dev.mobile:dadb:1.2.8") {
+        // This release accidentally publishes its native-test harness as a runtime
+        // dependency; dadb's Android transport does not use it.
+        exclude(group = "org.graalvm.buildtools", module = "junit-platform-native")
+    }
     testImplementation("junit:junit:4.13.2")
     // Android's org.json classes are stubs in local JVM tests; use the reference
     // implementation only on the test classpath to exercise release parsing.

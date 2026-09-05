@@ -22,6 +22,14 @@ does not bundle, redistribute, modify, or control Overdrive, and Overdrive does
 not endorse Deckscape.
 https://github.com/yash-srivastava/Overdrive-release
 
+Same-device ADB client
+----------------------
+dadb, copyright mobile.dev inc., is bundled under the Apache License 2.0 for
+Deckscape's narrowly scoped BYD wallpaper persistence repair. Its Okio and
+Kotlin runtime dependencies are also available under the Apache License 2.0.
+The complete licence text is bundled as DADB_LICENSE.txt.
+https://github.com/mobile-dev-inc/dadb
+
 The default catalogues are fr0st-xyz/wallz, elementary/wallpapers, KDE/breeze,
 vyrx-dev/Wallpapers, D3Ext/aesthetic-wallpapers, JoshuaThadi/Wall-E-Desk and
 ItsTerm1n4l/Wallpapers. Repository-level licences and collection notices do not

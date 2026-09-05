@@ -1,9 +1,12 @@
 package uk.darkbyte.deckscape;
 
 import android.content.Context;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Movie;
+import android.net.Uri;
+import android.provider.OpenableColumns;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -11,6 +14,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -134,6 +139,76 @@ final class WallpaperStore {
         }
     }
 
+    /** Copies a selected local or USB document into Deckscape's validated private library. */
+    static File importDocument(Context context, Uri uri) throws IOException {
+        if (uri == null) throw new IOException("No image was selected");
+        String displayName = null;
+        String mimeType;
+        long declaredSize = -1;
+        try {
+            mimeType = context.getContentResolver().getType(uri);
+        } catch (RuntimeException exception) {
+            throw new IOException("The selected file could not be opened", exception);
+        }
+        try (Cursor cursor = context.getContentResolver().query(uri,
+                new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE}, null, null,
+                null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameColumn = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                int sizeColumn = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (nameColumn >= 0) displayName = cursor.getString(nameColumn);
+                if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) {
+                    declaredSize = cursor.getLong(sizeColumn);
+                }
+            }
+        } catch (RuntimeException exception) {
+            throw new IOException("The selected file could not be opened", exception);
+        }
+
+        String filename = WallpaperRules.importFileName(displayName, mimeType);
+        if (filename == null) {
+            throw new IOException("Choose a JPEG, PNG, WebP, or GIF image");
+        }
+        long maximum = WallpaperRules.maxBytesFor(filename);
+        if (declaredSize > maximum) throw new IOException("The selected image is too large");
+
+        File library = directory(context);
+        File partial = File.createTempFile("import-", ".part", library);
+        long total = 0;
+        MessageDigest digest = sha256();
+        try {
+            try (InputStream input = context.getContentResolver().openInputStream(uri);
+                 FileOutputStream output = new FileOutputStream(partial)) {
+                if (input == null) throw new IOException("The selected file could not be opened");
+                byte[] buffer = new byte[32 * 1024];
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    total += read;
+                    if (total > maximum) throw new IOException("The selected image is too large");
+                    digest.update(buffer, 0, read);
+                    output.write(buffer, 0, read);
+                }
+                output.getFD().sync();
+            }
+            if (declaredSize >= 0 && total != declaredSize) {
+                throw new IOException("The selected file changed while it was imported");
+            }
+            validateImage(partial, filename);
+            String revision = hexadecimal(digest.digest());
+            File destination = new File(library,
+                    "local-" + revision + "-" + WallpaperRules.safeFileName(filename));
+            File[] matching = library.listFiles(file -> file.isFile()
+                    && file.getName().startsWith("local-" + revision + "-"));
+            if (matching != null && matching.length > 0) return matching[0];
+            if (!partial.renameTo(destination)) throw new IOException("Unable to finish the import");
+            return destination;
+        } catch (RuntimeException exception) {
+            throw new IOException("The selected file could not be imported", exception);
+        } finally {
+            if (partial.exists()) partial.delete();
+        }
+    }
+
     /** Adds a downloaded wallpaper to rotation without necessarily changing the current image. */
     static File include(Context context, File file) throws IOException {
         File installed = requireLibraryFile(context, file);
@@ -227,6 +302,10 @@ final class WallpaperStore {
     /** Returns a readable title from Deckscape's collision-resistant stored filename. */
     static String displayName(File file) {
         String stored = file.getName();
+        if (stored.startsWith("local-") && stored.length() > 71 && stored.charAt(70) == '-'
+                && isHexadecimal(stored, 6, 70)) {
+            return displayName(stored.substring(71));
+        }
         for (int index = 0; index + 14 < stored.length(); index++) {
             if (stored.charAt(index) != '-' || stored.charAt(index + 13) != '-') continue;
             boolean revision = true;
@@ -240,6 +319,14 @@ final class WallpaperStore {
             if (revision) return displayName(stored.substring(index + 14));
         }
         return displayName(stored);
+    }
+
+    private static boolean isHexadecimal(String value, int start, int end) {
+        for (int index = start; index < end; index++) {
+            char item = Character.toLowerCase(value.charAt(index));
+            if (!((item >= '0' && item <= '9') || (item >= 'a' && item <= 'f'))) return false;
+        }
+        return true;
     }
 
     /** Returns a catalog filename without its path, final extension, or underscore separators. */
@@ -302,6 +389,20 @@ final class WallpaperStore {
         return candidate;
     }
 
+    private static MessageDigest sha256() throws IOException {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("Image verification is unavailable", exception);
+        }
+    }
+
+    private static String hexadecimal(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) value.append(String.format("%02x", item & 0xff));
+        return value.toString();
+    }
+
     private static void validateImage(File file, String name) throws IOException {
         int width;
         int height;
@@ -317,7 +418,7 @@ final class WallpaperStore {
             height = bounds.outHeight;
         }
         long pixels = (long) width * height;
-        if (width <= 0 || height <= 0) throw new IOException("Downloaded file is not a decodable image");
+        if (width <= 0 || height <= 0) throw new IOException("File is not a decodable image");
         if (width > 16_384 || height > 16_384 || pixels > 120_000_000L) {
             throw new IOException("Image dimensions exceed the decoder safety limit");
         }
@@ -328,7 +429,7 @@ final class WallpaperStore {
             options.inSampleSize = sample;
             options.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap decoded = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
-            if (decoded == null) throw new IOException("Downloaded image data could not be decoded");
+            if (decoded == null) throw new IOException("Image data could not be decoded");
             decoded.recycle();
         }
     }

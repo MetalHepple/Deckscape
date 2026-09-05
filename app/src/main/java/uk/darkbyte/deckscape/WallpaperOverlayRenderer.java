@@ -2,7 +2,6 @@ package uk.darkbyte.deckscape;
 
 import android.content.Context;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -22,6 +21,7 @@ final class WallpaperOverlayRenderer {
     private static final long FRESH_WEATHER_MILLIS = 90 * 60_000L;
     private static final float CLOCK_WIDTH_DP = 210;
     private static final float WEATHER_WIDTH_DP = 270;
+    private static final float FORECAST_WIDTH_DP = 390;
     private static final float VEHICLE_BATTERY_WIDTH_DP = 300;
     private static final float VEHICLE_TEMPERATURES_WIDTH_DP = 320;
     private static final float VEHICLE_TYRES_WIDTH_DP = 330;
@@ -36,6 +36,7 @@ final class WallpaperOverlayRenderer {
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final Drawable overdriveIcon;
+    private WidgetTheme theme = WidgetTheme.DARK;
     private long cachedClockMinute = Long.MIN_VALUE;
     private Locale cachedClockLocale;
     private String cachedClockTimeZone = "";
@@ -51,6 +52,10 @@ final class WallpaperOverlayRenderer {
         stroke.setStyle(Paint.Style.STROKE);
         stroke.setStrokeCap(Paint.Cap.ROUND);
         stroke.setStrokeJoin(Paint.Join.ROUND);
+    }
+
+    void setAdaptiveStyle(boolean enabled, double wallpaperLuminance) {
+        theme = WidgetTheme.select(enabled, wallpaperLuminance);
     }
 
     void draw(Canvas canvas, int surfaceWidth, int surfaceHeight,
@@ -70,6 +75,9 @@ final class WallpaperOverlayRenderer {
                 case WEATHER:
                     drawWeather(canvas, bounds.left, bounds.top, bounds.width(), bounds.height(),
                             weather, nowMillis);
+                    break;
+                case FORECAST:
+                    drawForecast(canvas, bounds, weather, nowMillis);
                     break;
                 case VEHICLE_BATTERY:
                     drawVehicleBattery(canvas, bounds, vehicle, nowMillis);
@@ -106,6 +114,10 @@ final class WallpaperOverlayRenderer {
             case WEATHER:
                 widthDp = WEATHER_WIDTH_DP;
                 heightDp = STANDARD_CARD_HEIGHT_DP;
+                break;
+            case FORECAST:
+                widthDp = FORECAST_WIDTH_DP;
+                heightDp = VEHICLE_CARD_HEIGHT_DP;
                 break;
             case VEHICLE_BATTERY:
                 widthDp = VEHICLE_BATTERY_WIDTH_DP;
@@ -148,9 +160,10 @@ final class WallpaperOverlayRenderer {
                            long nowMillis) {
         drawCard(canvas, left, top, width, height);
         updateClockText(nowMillis);
-        drawText(canvas, cachedClockTime, left + dp(18), top + dp(47), sp(32), Color.WHITE,
+        drawText(canvas, cachedClockTime, left + dp(18), top + dp(47), sp(32), theme.primaryText,
                 Paint.Align.LEFT);
-        drawText(canvas, cachedClockDate, left + dp(18), top + dp(75), sp(15), 0xffdbe7ef,
+        drawText(canvas, cachedClockDate, left + dp(18), top + dp(75), sp(15),
+                theme.secondaryText,
                 Paint.Align.LEFT);
     }
 
@@ -188,12 +201,48 @@ final class WallpaperOverlayRenderer {
         if (displayable && nowMillis - snapshot.fetchedAtMillis > FRESH_WEATHER_MILLIS) {
             description += " \u2022 earlier";
         }
-        drawText(canvas, temperature, left + dp(78), top + dp(43), sp(28), Color.WHITE,
+        drawText(canvas, temperature, left + dp(78), top + dp(43), sp(28), theme.primaryText,
                 Paint.Align.LEFT);
-        drawText(canvas, description, left + dp(78), top + dp(66), sp(13), 0xffdbe7ef,
+        drawText(canvas, description, left + dp(78), top + dp(66), sp(13),
+                theme.secondaryText,
                 Paint.Align.LEFT);
         drawText(canvas, "Open-Meteo", left + width - dp(14), top + dp(84), sp(8),
-                0xffaebfca, Paint.Align.RIGHT);
+                theme.mutedText, Paint.Align.RIGHT);
+    }
+
+    private void drawForecast(Canvas canvas, RectF bounds, WeatherSnapshot snapshot,
+                              long nowMillis) {
+        drawCard(canvas, bounds.left, bounds.top, bounds.width(), bounds.height());
+        drawText(canvas, "OPEN-METEO  •  NEXT 4 HOURS", bounds.left + dp(15),
+                bounds.top + dp(20), sp(10),
+                theme.accentText, Paint.Align.LEFT);
+        boolean displayable = snapshot != null && snapshot.isValid()
+                && !snapshot.forecast.isEmpty() && nowMillis >= snapshot.fetchedAtMillis
+                && nowMillis - snapshot.fetchedAtMillis <= DISPLAY_CACHE_MILLIS;
+        if (!displayable) {
+            drawText(canvas, "Forecast unavailable", bounds.centerX(), bounds.top + dp(70),
+                    sp(15), theme.secondaryText, Paint.Align.CENTER);
+            return;
+        }
+        float usableWidth = bounds.width() - dp(24);
+        for (int index = 0; index < snapshot.forecast.size(); index++) {
+            WeatherSnapshot.ForecastPoint point = snapshot.forecast.get(index);
+            float center = bounds.left + dp(12)
+                    + usableWidth * (index + 0.5f) / snapshot.forecast.size();
+            String time = new SimpleDateFormat(DateFormat.is24HourFormat(context)
+                    ? "HH:mm" : "ha", Locale.getDefault()).format(new Date(point.timeMillis));
+            drawText(canvas, time, center, bounds.top + dp(40), sp(10), theme.secondaryText,
+                    Paint.Align.CENTER);
+            int save = canvas.save();
+            canvas.scale(0.48f, 0.48f, center, bounds.top + dp(59));
+            drawWeatherIcon(canvas, WeatherCondition.icon(point.weatherCode), center,
+                    bounds.top + dp(59));
+            canvas.restoreToCount(save);
+            drawText(canvas, Math.round(point.temperatureCelsius) + "°", center,
+                    bounds.top + dp(91), sp(18), theme.primaryText, Paint.Align.CENTER);
+            drawText(canvas, point.precipitationProbability + "% rain", center,
+                    bounds.top + dp(108), sp(9), theme.mutedText, Paint.Align.CENTER);
+        }
     }
 
     private void drawVehicleBattery(Canvas canvas, RectF bounds,
@@ -202,19 +251,20 @@ final class WallpaperOverlayRenderer {
         boolean available = snapshot != null && snapshot.isDisplayable(nowMillis);
         drawVehicleHeader(canvas, bounds, "BATTERY");
         String soc = available ? percent(snapshot.socPercent) : "—";
-        drawText(canvas, soc, bounds.left + dp(18), bounds.top + dp(71), sp(33), Color.WHITE,
+        drawText(canvas, soc, bounds.left + dp(18), bounds.top + dp(71), sp(33),
+                theme.primaryText,
                 Paint.Align.LEFT);
         String soh = available && VehicleTelemetrySnapshot.isNumber(snapshot.sohPercent)
                 ? "SOH  " + Math.round(snapshot.sohPercent) + "%" : "SOH  —";
         String range = available && VehicleTelemetrySnapshot.isNumber(snapshot.rangeKm)
                 ? Math.round(snapshot.rangeKm) + " km range" : "— km range";
         drawText(canvas, soh, bounds.left + dp(128), bounds.top + dp(52), sp(15),
-                0xffdbe7ef, Paint.Align.LEFT);
+                theme.secondaryText, Paint.Align.LEFT);
         drawText(canvas, range, bounds.left + dp(128), bounds.top + dp(76), sp(15),
-                0xffdbe7ef, Paint.Align.LEFT);
+                theme.secondaryText, Paint.Align.LEFT);
         String details = batteryDetails(available ? snapshot : null);
         drawText(canvas, details, bounds.left + dp(18), bounds.top + dp(101), sp(11),
-                0xffaebfca, Paint.Align.LEFT);
+                theme.mutedText, Paint.Align.LEFT);
         drawProviderCredit(canvas, bounds);
     }
 
@@ -252,7 +302,7 @@ final class WallpaperOverlayRenderer {
                 available ? snapshot.tyreRearRightBar : Double.NaN,
                 available ? snapshot.tyreRearRightTempC : Double.NaN, low, high);
         drawText(canvas, "bar", bounds.left + dp(16), bounds.top + dp(102), sp(10),
-                0xffaebfca, Paint.Align.LEFT);
+                theme.mutedText, Paint.Align.LEFT);
         drawProviderCredit(canvas, bounds);
     }
 
@@ -268,31 +318,31 @@ final class WallpaperOverlayRenderer {
             textLeft = bounds.left + dp(40);
         }
         drawText(canvas, "OVERDRIVE  •  " + title, textLeft, bounds.top + dp(22), sp(11),
-                0xff73dce8, Paint.Align.LEFT);
+                theme.accentText, Paint.Align.LEFT);
     }
 
     private void drawProviderCredit(Canvas canvas, RectF bounds) {
         drawText(canvas, "Overdrive data", bounds.right - dp(12), bounds.bottom - dp(9), sp(8),
-                0xff8da3b1, Paint.Align.RIGHT);
+                theme.creditText, Paint.Align.RIGHT);
     }
 
     private void drawTemperatureColumn(Canvas canvas, RectF bounds, float fraction,
                                        String label, double value) {
         float center = bounds.left + bounds.width() * fraction;
-        drawText(canvas, label, center, bounds.top + dp(48), sp(10), 0xffaebfca,
+        drawText(canvas, label, center, bounds.top + dp(48), sp(10), theme.mutedText,
                 Paint.Align.CENTER);
         String reading = VehicleTelemetrySnapshot.isNumber(value)
                 ? Math.round(value) + "°" : "—°";
-        drawText(canvas, reading, center, bounds.top + dp(80), sp(25), Color.WHITE,
+        drawText(canvas, reading, center, bounds.top + dp(80), sp(25), theme.primaryText,
                 Paint.Align.CENTER);
     }
 
     private void drawTyreColumn(Canvas canvas, RectF bounds, float fraction, String label,
                                 double value, double temperature, double low, double high) {
         float center = bounds.left + bounds.width() * fraction;
-        drawText(canvas, label, center, bounds.top + dp(48), sp(10), 0xffaebfca,
+        drawText(canvas, label, center, bounds.top + dp(48), sp(10), theme.mutedText,
                 Paint.Align.CENTER);
-        int color = Color.WHITE;
+        int color = theme.primaryText;
         if (VehicleTelemetrySnapshot.isNumber(value)
                 && VehicleTelemetrySnapshot.isNumber(low)
                 && VehicleTelemetrySnapshot.isNumber(high)
@@ -305,7 +355,7 @@ final class WallpaperOverlayRenderer {
                 Paint.Align.CENTER);
         String thermal = VehicleTelemetrySnapshot.isNumber(temperature)
                 ? Math.round(temperature) + "°" : "—°";
-        drawText(canvas, thermal, center, bounds.top + dp(92), sp(11), 0xffaebfca,
+        drawText(canvas, thermal, center, bounds.top + dp(92), sp(11), theme.mutedText,
                 Paint.Align.CENTER);
     }
 
@@ -338,10 +388,10 @@ final class WallpaperOverlayRenderer {
     private void drawCard(Canvas canvas, float left, float top, float width, float height) {
         RectF bounds = new RectF(left, top, left + width, top + height);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xb80a1118);
+        paint.setColor(theme.card);
         canvas.drawRoundRect(bounds, dp(16), dp(16), paint);
         stroke.setStrokeWidth(dp(1));
-        stroke.setColor(0x55ffffff);
+        stroke.setColor(theme.border);
         canvas.drawRoundRect(bounds, dp(16), dp(16), stroke);
     }
 
@@ -358,9 +408,9 @@ final class WallpaperOverlayRenderer {
     private void drawWeatherIcon(Canvas canvas, WeatherCondition.Icon icon, float centerX,
                                  float centerY) {
         stroke.setStrokeWidth(dp(2.4f));
-        stroke.setColor(Color.WHITE);
+        stroke.setColor(theme.primaryText);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xffdbe7ef);
+        paint.setColor(theme.secondaryText);
         if (icon == WeatherCondition.Icon.CLEAR) {
             drawSun(canvas, centerX, centerY);
             return;

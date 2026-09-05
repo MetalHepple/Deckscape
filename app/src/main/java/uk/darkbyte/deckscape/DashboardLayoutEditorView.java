@@ -39,6 +39,8 @@ final class DashboardLayoutEditorView extends View {
     private ScaleMode defaultScaleMode = ScaleMode.FILL;
     private WeatherSnapshot weather;
     private VehicleTelemetrySnapshot vehicle;
+    private boolean adaptiveWidgetStyle = true;
+    private double wallpaperLuminance = Double.NaN;
     private boolean snappingEnabled = true;
     private boolean snappedX;
     private boolean snappedY;
@@ -75,7 +77,15 @@ final class DashboardLayoutEditorView extends View {
             bitmap = decoded.bitmap;
             movie = decoded.movie;
             movieStartedAt = SystemClock.uptimeMillis();
+            wallpaperLuminance = WallpaperLuminanceClassifier.measure(bitmap);
         }
+        overlayRenderer.setAdaptiveStyle(adaptiveWidgetStyle, wallpaperLuminance);
+        invalidate();
+    }
+
+    void setAdaptiveWidgetStyle(boolean enabled) {
+        adaptiveWidgetStyle = enabled;
+        overlayRenderer.setAdaptiveStyle(enabled, wallpaperLuminance);
         invalidate();
     }
 

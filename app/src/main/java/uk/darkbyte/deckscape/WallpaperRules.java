@@ -31,6 +31,35 @@ final class WallpaperRules {
         return isGif(name) ? MAX_GIF_BYTES : MAX_STATIC_BYTES;
     }
 
+    /** Resolves an untrusted document-provider name to a supported local filename. */
+    static String importFileName(String displayName, String mimeType) {
+        String safe = safeFileName(displayName);
+        if (isSupportedName(safe)) return safe;
+
+        String extension;
+        String normalizedMime = mimeType == null ? "" : mimeType.toLowerCase(Locale.ROOT);
+        switch (normalizedMime) {
+            case "image/jpeg":
+            case "image/jpg":
+                extension = ".jpg";
+                break;
+            case "image/png":
+                extension = ".png";
+                break;
+            case "image/webp":
+                extension = ".webp";
+                break;
+            case "image/gif":
+                extension = ".gif";
+                break;
+            default:
+                return null;
+        }
+        int dot = safe.lastIndexOf('.');
+        String stem = dot > 0 ? safe.substring(0, dot) : safe;
+        return safeFileName(stem + extension);
+    }
+
     static boolean canInstall(CatalogItem item) {
         return !item.isDirectory()
                 && isSupportedName(item.name)

@@ -21,6 +21,10 @@ public final class WeatherClientTest {
         assertTrue(url.getQuery().contains("latitude=51.5"));
         assertTrue(url.getQuery().contains("longitude=-0.1"));
         assertTrue(url.getQuery().contains("current=temperature_2m,weather_code"));
+        assertTrue(url.getQuery().contains(
+                "hourly=temperature_2m,weather_code,precipitation_probability"));
+        assertTrue(url.getQuery().contains("forecast_hours=4"));
+        assertTrue(url.getQuery().contains("timeformat=unixtime"));
     }
 
     @Test
@@ -32,14 +36,20 @@ public final class WeatherClientTest {
     @Test
     public void parsesBoundedCurrentConditions() throws Exception {
         WeatherSnapshot snapshot = WeatherClient.parse(
-                "{\"current\":{\"temperature_2m\":18.6,\"weather_code\":2}}",
-                515, -1, 123_456L);
+                "{\"current\":{\"temperature_2m\":18.6,\"weather_code\":2},"
+                        + "\"hourly\":{\"time\":[1700000000,1700003600],"
+                        + "\"temperature_2m\":[18.6,17.9],\"weather_code\":[2,3],"
+                        + "\"precipitation_probability\":[10,25]}}",
+                515, -1, 1_700_000_000_000L);
 
         assertEquals(515, snapshot.latitudeTenths);
         assertEquals(-1, snapshot.longitudeTenths);
         assertEquals(18.6, snapshot.temperatureCelsius, 0.001);
         assertEquals(2, snapshot.weatherCode);
-        assertEquals(123_456L, snapshot.fetchedAtMillis);
+        assertEquals(1_700_000_000_000L, snapshot.fetchedAtMillis);
+        assertEquals(2, snapshot.forecast.size());
+        assertEquals(1_700_003_600_000L, snapshot.forecast.get(1).timeMillis);
+        assertEquals(25, snapshot.forecast.get(1).precipitationProbability);
     }
 
     @Test
@@ -58,5 +68,12 @@ public final class WeatherClientTest {
                         0, 0, 1));
         assertThrows(IOException.class,
                 () -> WeatherClient.parse("{\"error\":true}", 0, 0, 1));
+        assertThrows(IOException.class,
+                () -> WeatherClient.parse(
+                        "{\"current\":{\"temperature_2m\":12,\"weather_code\":2},"
+                                + "\"hourly\":{\"time\":[1700000000],"
+                                + "\"temperature_2m\":[12],\"weather_code\":[2],"
+                                + "\"precipitation_probability\":[]}}",
+                        0, 0, 1));
     }
 }
