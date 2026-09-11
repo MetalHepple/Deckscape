@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.1 — 2026-09-11
+
+### Fixed
+
+- Replace the temporary BYD wallpaper guard with opt-in persistent protection,
+  preventing delayed stock wallpaper takeover while keeping BYD theme services enabled.
+- Add Settings → BYD wallpaper → Restore BYD, restoring the saved permission
+  and opening the BYD chooser without the broken stock Android preview.
+- Remove wake-time force-stop polling and retain the narrow BYD visibility workaround.
+- Preserve recovery for the earlier private package-disable test build.
+
+Use Restore BYD before uninstalling Deckscape or clearing its data. Activation,
+restore, quickboot and full Android reboot passed on the tested DiLink3.0 Android 10
+head unit. Broader firmware and display/wake reliability are not guaranteed.
+The experimental theme picker and custom theme prototype are not included.
+
 All notable Deckscape changes are documented here. Versions follow semantic
 versioning, and public Android `versionCode` values increase once per release.
 

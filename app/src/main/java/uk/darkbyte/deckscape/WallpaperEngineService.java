@@ -97,8 +97,6 @@ public final class WallpaperEngineService extends WallpaperService {
         private final WeatherClient weatherClient = new WeatherClient();
         private final ExecutorService weatherExecutor = Executors.newSingleThreadExecutor();
         private final ExecutorService vehicleExecutor = Executors.newSingleThreadExecutor();
-        private final BydWallpaperWakeGuard bydWallpaperWakeGuard =
-                new BydWallpaperWakeGuard(WallpaperEngineService.this);
         private final VehicleTelemetryProvider vehicleProvider =
                 new OverdriveVehicleTelemetryProvider(WallpaperEngineService.this);
         private final WallpaperOverlayRenderer overlayRenderer =
@@ -189,7 +187,6 @@ public final class WallpaperEngineService extends WallpaperService {
             reloadOverlayState();
             updateLightSensor();
             if (visible) {
-                bydWallpaperWakeGuard.onWallpaperVisible(isPreview());
                 drawSoon();
             }
             else {
@@ -225,7 +222,6 @@ public final class WallpaperEngineService extends WallpaperService {
             cancelVehicleRequest();
             weatherExecutor.shutdownNow();
             vehicleExecutor.shutdownNow();
-            bydWallpaperWakeGuard.close();
             unregisterLightSensor();
             releaseDecoded();
             if (receiverRegistered) {
