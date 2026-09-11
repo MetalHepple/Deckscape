@@ -944,13 +944,14 @@ public final class MainActivity extends Activity {
 
         TextView introduction = Ui.text(this,
                 needsBydProtection
-                        ? "Android needs one confirmation. Deckscape then enables wallpaper "
-                                + "protection for this head unit."
+                        ? "After Android confirms Deckscape, protection blocks BYD's permission "
+                                + "to replace your wallpaper, including after restarts. "
+                                + "BYD's wallpaper app stays enabled."
                         : "Android needs one confirmation before Deckscape can become your live wallpaper.",
                 14, Ui.MUTED);
-        introduction.setMaxLines(2);
+        introduction.setMaxLines(needsBydProtection ? 3 : 2);
         panel.addView(introduction, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 52)));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, needsBydProtection ? 76 : 52)));
 
         TextView steps = Ui.text(this,
                 needsBydProtection
@@ -974,7 +975,8 @@ public final class MainActivity extends Activity {
 
         TextView reassurance = Ui.text(this,
                 needsBydProtection
-                        ? "The authorization stays on this head unit and is used only for this fix."
+                        ? "Use Settings → BYD wallpaper → Restore BYD before uninstalling Deckscape "
+                                + "or clearing its data. Your wallpapers are not deleted."
                         : "After activation, previews and wallpaper changes stay inside Deckscape.",
                 13, Ui.CYAN);
         reassurance.setGravity(Gravity.CENTER_VERTICAL);
@@ -986,9 +988,9 @@ public final class MainActivity extends Activity {
         Button later = Ui.button(this, "Not now", false);
         Button activate = Ui.button(this, "Activate Deckscape", true);
         actions.addView(later, new LinearLayout.LayoutParams(
-                Ui.dp(this, 110), Ui.dp(this, 46)));
+                Ui.dp(this, 110), Ui.dp(this, 48)));
         LinearLayout.LayoutParams activateParams = new LinearLayout.LayoutParams(
-                Ui.dp(this, 166), Ui.dp(this, 46));
+                Ui.dp(this, 166), Ui.dp(this, 48));
         activateParams.leftMargin = Ui.dp(this, 10);
         actions.addView(activate, activateParams);
         panel.addView(actions, new LinearLayout.LayoutParams(
@@ -997,6 +999,10 @@ public final class MainActivity extends Activity {
         AlertDialog dialog = new AlertDialog.Builder(this).setView(panel).create();
         later.setOnClickListener(view -> dialog.dismiss());
         activate.setOnClickListener(view -> {
+            if (needsBydProtection && !BydWallpaperProtection.setApproved(this, true)) {
+                Toast.makeText(this, "Could not save wallpaper protection settings.", Toast.LENGTH_LONG).show();
+                return;
+            }
             dialog.dismiss();
             activateWallpaper();
         });
@@ -1546,6 +1552,12 @@ public final class MainActivity extends Activity {
                 || !BydWallpaperProtectionPolicy.isAvailable()) {
             return;
         }
+        if (!BydWallpaperProtection.hasDecision(this)) {
+            bydProtectionAttempted = true;
+            showBydWallpaperSettings();
+            return;
+        }
+        if (!BydWallpaperProtection.isApproved(this)) return;
         bydProtectionAttempted = true;
         bydProtectionInProgress = true;
         io.execute(() -> {
@@ -1555,6 +1567,7 @@ public final class MainActivity extends Activity {
                 if (isFinishing() || isDestroyed()) return;
                 if (result != BydWallpaperProtection.Result.FAILED) {
                     setBydProtectionPending(false);
+                    updateActiveState();
                 } else if (showFailure) {
                     showBydWallpaperProtectionFailure();
                 }
@@ -1569,7 +1582,8 @@ public final class MainActivity extends Activity {
                 .setTitle("Wallpaper protection did not finish")
                 .setMessage("Wallpaper protection could not be enabled. "
                         + "If Android asks about USB debugging, select ‘Always allow’, tap Allow, "
-                        + "then try again.")
+                        + "then try again. If it still fails, protection has not been verified; "
+                        + "a different firmware may not support it.")
                 .setNegativeButton("Not now", (dialog, which) ->
                         setBydProtectionPending(false))
                 .setPositiveButton("Try again", (dialog, which) -> {
@@ -1580,6 +1594,91 @@ public final class MainActivity extends Activity {
         bydProtectionFailureDialog.setOnDismissListener(dialog ->
                 bydProtectionFailureDialog = null);
         bydProtectionFailureDialog.show();
+    }
+
+    private void showBydWallpaperSettings() {
+        if (bydProtectionInProgress) {
+            Toast.makeText(this, "Wallpaper protection is still being checked.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (bydProtectionFailureDialog != null && bydProtectionFailureDialog.isShowing()) return;
+        boolean protectedNow = BydWallpaperProtection.isProtected(this);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
+                .setTitle("BYD wallpaper")
+                .setMessage((protectedNow ? "Wallpaper protection was verified during this app session. "
+                        : "Protection blocks BYD's permission to replace your wallpaper, "
+                                + "including after a restart. ")
+                        + "BYD's wallpaper app stays enabled, but its wallpaper changes are blocked. "
+                        + "Restore BYD here before uninstalling Deckscape or clearing its data. "
+                        + "Restore returns the previous permission and opens BYD Themes, "
+                        + "where you can choose a BYD wallpaper. "
+                        + "Your wallpaper files are kept.")
+                .setNegativeButton("Close", (dialog, which) -> {
+                    if (!BydWallpaperProtection.hasDecision(this)) {
+                        BydWallpaperProtection.setApproved(this, false);
+                    }
+                })
+                .setNeutralButton("Restore BYD", (dialog, which) -> restoreBydWallpaper());
+        if (!protectedNow) {
+            builder.setPositiveButton(isWallpaperActive() ? "Enable protection" : "Activate Deckscape",
+                    (dialog, which) -> {
+                        if (!isWallpaperActive()) {
+                            showActivationGuide();
+                        } else if (BydWallpaperProtection.setApproved(this, true)) {
+                            bydProtectionAttempted = false;
+                            maybeApplyBydWallpaperProtection(true);
+                        }
+                    });
+        }
+        bydProtectionFailureDialog = builder.create();
+        bydProtectionFailureDialog.setOnDismissListener(dialog -> bydProtectionFailureDialog = null);
+        bydProtectionFailureDialog.show();
+    }
+
+    private void restoreBydWallpaper() {
+        if (bydProtectionInProgress) return;
+        // Opt out before opening another activity so onResume cannot undo the user's restore.
+        if (!BydWallpaperProtection.setApproved(this, false)) return;
+        setBydProtectionPending(false);
+        bydProtectionAttempted = true;
+        bydProtectionInProgress = true;
+        io.execute(() -> {
+            BydWallpaperProtection.Result result = BydWallpaperProtection.restore(this);
+            runOnUiThread(() -> {
+                bydProtectionInProgress = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (result != BydWallpaperProtection.Result.APPLIED) {
+                    new AlertDialog.Builder(this).setTitle("BYD wallpaper was not restored")
+                            .setMessage("Keep Deckscape installed and try Restore BYD again. "
+                                    + "Allow USB debugging if Android asks.")
+                            .setPositiveButton("Try again", (dialog, which) -> restoreBydWallpaper())
+                            .setNegativeButton("Close", null).show();
+                    return;
+                }
+                openBydThemesAfterRestore();
+            });
+        });
+    }
+
+    private void openBydThemesAfterRestore() {
+        // This firmware's stock engine does not complete Android's live-wallpaper
+        // preview reliably and can leave the display in portrait. Use the OEM chooser.
+        try {
+            Intent themes = getPackageManager().getLaunchIntentForPackage(
+                    BydWallpaperProtectionPolicy.THEMES_PACKAGE_NAME);
+            if (themes != null) {
+                startActivity(themes);
+                Toast.makeText(this, "BYD wallpaper changes are restored. Choose a wallpaper in BYD Themes.",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
+        } catch (Exception exception) {
+            // Permission restoration succeeded even if the OEM chooser is unavailable.
+        }
+        new AlertDialog.Builder(this).setTitle("BYD wallpaper changes restored")
+                .setMessage("Open BYD Themes and choose a wallpaper. "
+                        + "Deckscape stays selected until you choose another wallpaper.")
+                .setPositiveButton("OK", null).show();
     }
 
     private void openSelectedSource() {
@@ -1852,6 +1951,13 @@ public final class MainActivity extends Activity {
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        if (BydWallpaperProtectionPolicy.isAvailable()) {
+            Button protection = Ui.button(this, "BYD wallpaper", false);
+            protection.setOnClickListener(view -> showBydWallpaperSettings());
+            actions.addView(protection, new LinearLayout.LayoutParams(
+                    Ui.dp(this, 190), Ui.dp(this, 48)));
+            actions.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        }
         Button done = Ui.button(this, "Done", true);
         actions.addView(done, new LinearLayout.LayoutParams(
                 Ui.dp(this, 118), Ui.dp(this, 46)));

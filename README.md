@@ -35,7 +35,7 @@ Android 9+ devices that support live wallpapers and APK installation.
 ## Download
 
 <p align="center">
-  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.9.0.apk"><strong>Download Deckscape 1.9.0 APK</strong></a>
+  <a href="https://github.com/MetalHepple/Deckscape/releases/latest/download/Deckscape-1.9.1.apk"><strong>Download Deckscape 1.9.1 APK</strong></a>
 </p>
 
 The signed APK supports Android 9 (API 28) and newer. Download it directly from
@@ -51,16 +51,28 @@ See [CHANGELOG.md](CHANGELOG.md) for changes since the first public release.
 Android owns the final live-wallpaper confirmation step. Existing installations
 can be updated in place with later Deckscape releases from this repository.
 
-On verified BYD AUTO / DiLink3.0 systems, Deckscape applies a narrow persistence
-fix after Android confirms it as the live wallpaper. Android may show one local
-USB-debugging authorization the first time; select **Always allow** and approve
-it. Deckscape then uses that same-device connection only to force-stop BYD's
-stock wallpaper package. After the active wallpaper becomes visible, a short
-bounded guard stops BYD whenever its delayed quickboot provider restarts during
-that window. On the verified Android 10 firmware, Deckscape also skips BYD's
-optional visibility report, which otherwise wakes the stock wallpaper app each
-time the wallpaper is shown or hidden. Other Android devices and wallpaper
-previews never start the ADB client.
+On BYD AUTO / DiLink3.0 Android 10 systems, setup offers persistent wallpaper
+protection after Android confirms Deckscape as the live wallpaper. Android may
+show one local USB-debugging authorization; select **Always allow** and approve
+it. Protection sets only `com.byd.wallpaperhome`'s `WRITE_WALLPAPER` operation
+to `ignore` for the primary Android user. The wallpaper app and its provider
+stay enabled, but its attempts to replace the wallpaper are blocked. No
+wallpaper files are deleted and no theme/account service is disabled. There is
+no timed guard, ongoing polling, or automatic wallpaper reselection.
+
+**Before uninstalling Deckscape or clearing its data, use Settings → BYD
+wallpaper → Restore BYD.** This restores the previous wallpaper permission
+and opens BYD Themes so you can choose a stock wallpaper. The permission restriction is an Android
+setting: it outlives Deckscape if the app is removed without restoring first.
+The [protection and recovery notes](docs/investigations/BYD_WALLPAPER_PROTECTION.md)
+explain recovery and validation. Native activation, Restore BYD, quickboot and
+full Android reboot were verified on the tested head unit, with reported overnight
+wallpaper persistence. This release does not claim to resolve every display or
+wake fault; a separately captured backlight fault is described in those notes.
+Firmware updates may alter or reset settings.
+
+Deckscape also skips this firmware's optional provider visibility report. Other
+Android devices and wallpaper previews never start the ADB client.
 
 ### App updates
 
@@ -379,12 +391,15 @@ and decoded before an atomic move into app-private storage.
 
 Android owns wallpaper activation. Deckscape opens the ordinary live-wallpaper
 confirmation screen and never modifies a manufacturer theme database. On the
-exact BYD AUTO / DiLink3.0 target only, it makes an authenticated loopback ADB
-connection after activation and force-stops `com.byd.wallpaperhome`. The active
-wallpaper keeps one local connection for a short, bounded wake window and stops
-only that package when its process appears. The key is kept in private,
-non-backed-up app storage and every command target is fixed in code; no general
-ADB console is exposed. On verified BYD Android 10 hardware, the wallpaper
+exact BYD AUTO / DiLink3.0 Android 10 target only, protection uses an authenticated
+loopback ADB connection after activation and explicit setup consent to restrict
+only `com.byd.wallpaperhome`'s wallpaper AppOp for user 0, never its shared system
+UID. It saves the original setting before writing, flushes Android's pending
+AppOps settings to disk, and verifies the result; Settings provides a verified
+restore action. Connections
+close after setup or restoration; no background ADB guard remains. The key is
+kept in private, non-backed-up app storage and every command target is fixed in
+code; no general ADB console is exposed. On verified BYD Android 10 hardware, the wallpaper
 service suppresses only the vendor's optional provider visibility notification;
 ordinary rendering callbacks and content access are preserved.
 Configure the app only while parked when it is used on a vehicle display.
