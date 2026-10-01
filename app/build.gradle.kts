@@ -48,7 +48,7 @@ android {
 
 dependencies {
     // Authenticated, same-device transport for the fixed BYD wallpaper repair.
-    implementation("dev.mobile:dadb:1.2.8") {
+    implementation("dev.mobile:dadb:2.0.0") {
         // This release accidentally publishes its native-test harness as a runtime
         // dependency; dadb's Android transport does not use it.
         exclude(group = "org.graalvm.buildtools", module = "junit-platform-native")
